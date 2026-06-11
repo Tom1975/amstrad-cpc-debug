@@ -1,64 +1,66 @@
 # Amstrad CPC Debug — VS Code Extension
 
-Extension de débogage VS Code pour le développement Z80 sur **Amstrad CPC** (CPC 464 / 664 / 6128 / CPC+).
+> 🇫🇷 [Version française disponible](README.fr.md)
 
-L'extension agit comme un Debug Adapter Protocol (DAP) entre VS Code et un émulateur CPC. Elle se connecte à l'émulateur via un protocole JSON/TCP documenté dans [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md), ce qui permet de l'utiliser avec n'importe quel émulateur qui implémente ce protocole.
+A VS Code debugging extension for **Amstrad CPC** Z80 development (CPC 464 / 664 / 6128 / CPC+).
 
-L'émulateur de référence est **[SugarboxV2](https://github.com/Tom1975/SugarboxV2)**.
+The extension acts as a Debug Adapter Protocol (DAP) bridge between VS Code and a CPC emulator. It connects to the emulator over a JSON/TCP protocol documented in [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md), making it compatible with any emulator that implements this protocol.
+
+The reference emulator is **[SugarboxV2](https://github.com/Tom1975/SugarboxV2)**.
 
 ---
 
-## Prérequis
+## Requirements
 
 - [VS Code](https://code.visualstudio.com/) 1.108+
-- Un émulateur CPC supportant le protocole TCP debug (voir [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md))
-- [RASM](http://www.rasm.assemble.tf/) (assembleur Z80, recommandé)
-- Node.js 18+ (pour compiler l'extension depuis les sources)
+- A CPC emulator supporting the TCP debug protocol (see [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md))
+- [RASM](http://www.rasm.assemble.tf/) (recommended Z80 assembler)
+- Node.js 18+ (to build the extension from source)
 
 ---
 
 ## Installation
 
-### Depuis le VSIX
+### From VSIX
 
 ```bash
 code --install-extension amstrad-cpc-debug-0.0.3.vsix
 ```
 
-### Compiler depuis les sources
+### Build from source
 
 ```bash
 npm install
 npm run bundle        # compile TypeScript + webpack → dist/main.js
-python3 make_vsix.py  # génère amstrad-cpc-debug-0.0.3.vsix
+python3 make_vsix.py  # produces amstrad-cpc-debug-0.0.3.vsix
 code --install-extension amstrad-cpc-debug-0.0.3.vsix
 ```
 
 ---
 
-## Démarrage rapide
+## Quick start
 
-### 1. Configurer les chemins
+### 1. Configure paths
 
-Ouvrez la palette de commandes (`Ctrl+Shift+P`) → **Z80 Debug: Configure** et renseignez :
-- le chemin vers l'émulateur (SugarboxV2 ou autre)
-- le chemin vers RASM
+Open the command palette (`Ctrl+Shift+P`) → **Z80 Debug: Configure** and set:
+- the path to the emulator (SugarboxV2 or other)
+- the path to RASM
 
-### 2. Créer un projet
+### 2. Create a project
 
-Palette → **Z80 Debug: New CPC Project...** — l'assistant crée un dossier avec `src/main.asm`, les fichiers `.vscode/` (tasks, launch, settings) et un template assembleur prêt à compiler.
+Palette → **Z80 Debug: New CPC Project...** — the wizard creates a folder with `src/main.asm`, the `.vscode/` files (tasks, launch, settings), and an assembler template ready to build.
 
-### 3. Lancer le debug
+### 3. Start debugging
 
-Appuyez sur **F5** ou utilisez **Z80 Debug: Launch CPC...** pour le lancement rapide interactif.
+Press **F5** or use **Z80 Debug: Launch CPC...** for the interactive quick launch.
 
 ---
 
-## Configuration launch.json
+## launch.json configuration
 
-### Mode Launch (recommandé)
+### Launch mode (recommended)
 
-L'extension démarre l'émulateur, charge le média et attache le debugger.
+The extension starts the emulator, loads the media, and attaches the debugger.
 
 ```json
 {
@@ -68,7 +70,7 @@ L'extension démarre l'émulateur, charge le média et attache le debugger.
       "type": "z80",
       "request": "launch",
       "name": "Amstrad CPC - Debug",
-      "emulator": "/chemin/vers/Sugarbox",
+      "emulator": "/path/to/Sugarbox",
       "snapshot": "${workspaceFolder}/build/mygame.sna",
       "symbolFile": "${workspaceFolder}/build/mygame.rasm",
       "port": 1234,
@@ -78,9 +80,9 @@ L'extension démarre l'émulateur, charge le média et attache le debugger.
 }
 ```
 
-### Mode Attach
+### Attach mode
 
-Attache le debugger à un émulateur déjà en cours.
+Attach the debugger to an already-running emulator.
 
 ```bash
 ./Sugarbox --debug --debug_server 1234
@@ -96,42 +98,42 @@ Attache le debugger à un émulateur déjà en cours.
 }
 ```
 
-### Propriétés de configuration
+### Configuration properties
 
-#### Mode `launch`
+#### `launch` mode
 
-| Propriété | Type | Défaut | Description |
+| Property | Type | Default | Description |
 |---|---|---|---|
-| `emulator` | string | *(requis)* | Chemin vers le binaire de l'émulateur |
-| `port` | number | `1234` | Port TCP du serveur debug |
-| `snapshot` | string | — | Fichier `.sna` à charger |
-| `disk` | string | — | Disquette `.dsk` — lecteur A |
-| `diskB` | string | — | Disquette `.dsk` — lecteur B |
-| `tape` | string | — | Cassette `.cdt` / `.wav` / `.tzx` |
-| `cartridge` | string | — | Cartouche `.cpr` (CPC+/GX4000) |
-| `configuration` | string | — | Profil machine (ex: `CPC464`, `CPC+`) |
-| `symbolFile` | string | — | Fichier symboles RASM (`.rasm`) |
-| `sourceFile` | string | — | Fichier source principal `.asm` (enrichit le désassemblage) |
-| `hideEmulator` | boolean | `false` | Cacher la fenêtre de l'émulateur |
-| `preLaunchTask` | string | — | Tâche VS Code à exécuter avant le lancement |
+| `emulator` | string | *(required)* | Path to the emulator binary |
+| `port` | number | `1234` | TCP port of the debug server |
+| `snapshot` | string | — | `.sna` snapshot file to load |
+| `disk` | string | — | `.dsk` disk image — drive A |
+| `diskB` | string | — | `.dsk` disk image — drive B |
+| `tape` | string | — | `.cdt` / `.wav` / `.tzx` tape image |
+| `cartridge` | string | — | `.cpr` cartridge (CPC+/GX4000) |
+| `configuration` | string | — | Machine profile (e.g. `CPC464`, `CPC+`) |
+| `symbolFile` | string | — | RASM symbol file (`.rasm`) |
+| `sourceFile` | string | — | Main `.asm` source file (enriches disassembly) |
+| `hideEmulator` | boolean | `false` | Hide the emulator window |
+| `preLaunchTask` | string | — | VS Code task to run before launch |
 
-#### Mode `attach`
+#### `attach` mode
 
-| Propriété | Type | Défaut | Description |
+| Property | Type | Default | Description |
 |---|---|---|---|
-| `port` | number | `1234` | Port TCP du serveur debug |
-| `symbolFile` | string | — | Fichier symboles RASM (`.rasm`) |
-| `sourceFile` | string | — | Fichier source principal `.asm` |
+| `port` | number | `1234` | TCP port of the debug server |
+| `symbolFile` | string | — | RASM symbol file (`.rasm`) |
+| `sourceFile` | string | — | Main `.asm` source file |
 
 ---
 
-## Fonctionnalités
+## Features
 
-### Contrôle de l'exécution
+### Execution control
 
-| Action | Raccourci |
+| Action | Shortcut |
 |---|---|
-| Continuer | F5 |
+| Continue | F5 |
 | Pause | F6 |
 | Step Over | F10 |
 | Step Into | F11 |
@@ -139,13 +141,13 @@ Attache le debugger à un émulateur déjà en cours.
 | Restart | Ctrl+Shift+F5 |
 | Stop | Shift+F5 |
 
-**Step Over** gère intelligemment `CALL`, `RST`, `DJNZ` et les instructions de bloc (`LDIR`, `LDDR`, etc.).
+**Step Over** intelligently handles `CALL`, `RST`, `DJNZ`, and block instructions (`LDIR`, `LDDR`, etc.).
 
-**Step Out** lit l'adresse de retour sur la pile et pose un breakpoint temporaire dessus.
+**Step Out** reads the return address from the stack and places a temporary breakpoint on it.
 
-### Désassemblage virtuel
+### Virtual disassembly
 
-L'extension ouvre automatiquement une vue de désassemblage à l'adresse courante du PC. Si un fichier symboles RASM est fourni, les labels sont intercalés dans le texte :
+The extension automatically opens a disassembly view at the current PC address. If a RASM symbol file is provided, labels are interleaved in the text:
 
 ```
 GAME_LOOP:
@@ -157,60 +159,60 @@ GAME_OVER:
 0x5A07  HALT             ; 76        v
 ```
 
-Raccourcis :
-- `Ctrl+Alt+D` — ouvrir le désassemblage à une adresse
-- `Ctrl+Alt+M` — ouvrir la vue mémoire à une adresse
+Shortcuts:
+- `Ctrl+Alt+D` — open disassembly at an address
+- `Ctrl+Alt+M` — open memory view at an address
 
 ### Breakpoints
 
-Trois types de breakpoints coexistent et sont fusionnés en un seul `setBreakpoints` envoyé à l'émulateur :
+Three breakpoint types coexist and are merged into a single `setBreakpoints` call sent to the emulator:
 
-- **Breakpoints sur le désassemblage** — clic dans la marge ou `F9` sur une ligne d'instruction
-- **Label breakpoints** — panneau VS Code *Breakpoints > Function Breakpoints* : saisir un label RASM ou une adresse (`0xBB5A`, `BB5A`, `47962`)
-- **Instruction breakpoints** — depuis la vue Disassembly native de VS Code
+- **Disassembly breakpoints** — click in the gutter or press `F9` on an instruction line
+- **Label breakpoints** — VS Code *Breakpoints > Function Breakpoints* panel: enter a RASM label or an address (`0xBB5A`, `BB5A`, `47962`)
+- **Instruction breakpoints** — from VS Code's native Disassembly View
 
-Les breakpoints directs (F9) sont **persistants** : ils survivent aux redémarrages de session et sont ré-appliqués automatiquement à chaque `configurationDone`.
+Direct breakpoints (F9) are **persistent**: they survive session restarts and are automatically re-applied on each `configurationDone`.
 
-### Registres et pile
+### Registers and stack
 
-Le panneau **Variables** expose :
-- **Registers** : tous les registres Z80 (AF, BC, DE, HL, SP, PC, IX, IY, AF', BC', DE', HL', I, R) — éditables par double-clic
-- **Stack** : 16 premiers mots sur la pile avec leur adresse
+The **Variables** panel exposes:
+- **Registers**: all Z80 registers (AF, BC, DE, HL, SP, PC, IX, IY, AF', BC', DE', HL', I, R) — editable by double-clicking
+- **Stack**: top 16 words on the stack with their addresses
 
-Les registres 16 bits proposent *Open Memory View* et *Open Disassembly View* dans leur menu contextuel.
+16-bit registers offer *Open Memory View* and *Open Disassembly View* in their context menu.
 
-### Mémoire
+### Memory
 
-Clic droit sur un registre → *Open Memory View* — permet d'inspecter et d'éditer la mémoire.
+Right-click a register → *Open Memory View* — inspect and edit memory.
 
-Si l'émulateur supporte `getMemBanks`, un sélecteur de banque mémoire est proposé à l'ouverture du désassemblage.
+If the emulator supports `getMemBanks`, a bank selector is shown when opening a disassembly window.
 
-### Panneaux hardware
+### Hardware panels
 
-Une barre d'activité **Z80 Debug** donne accès aux panneaux hardware :
+A **Z80 Debug** activity bar entry gives access to hardware panels:
 
-| Panneau | Contenu |
+| Panel | Content |
 |---|---|
-| CRTC / ASIC | Registres CRTC 6845, sprites ASIC (CPC+), palette, DMA |
-| Gate Array | Mode vidéo, palette 17 couleurs, état des interruptions |
-| PSG (AY-3-8912) | Registres des 3 canaux sonores |
-| PPI (8255) | Ports A/B/C, mode, clavier |
-| FDC | État des lecteurs, secteurs, vue hex de la piste MFM, insertion de disque |
-| Cassette | Compteur, état, signal carré |
+| CRTC / ASIC | CRTC 6845 registers, ASIC sprites (CPC+), palette, DMA |
+| Gate Array | Video mode, 17-colour palette, interrupt state |
+| PSG (AY-3-8912) | Registers for all 3 sound channels |
+| PPI (8255) | Ports A/B/C, mode, keyboard |
+| FDC | Drive state, sectors, MFM track hex view, disk insertion |
+| Tape | Counter, state, square-wave signal |
 
-Les panneaux se rafraîchissent automatiquement à chaque arrêt du CPU.
+Panels refresh automatically on every CPU stop.
 
 ### Quick Launch
 
-**Z80 Debug: Launch CPC...** (`Ctrl+Shift+P`) — assistant interactif pour choisir le média et la configuration machine. Les derniers paramètres sont mémorisés et proposés en tête de liste pour relancer en un clic.
+**Z80 Debug: Launch CPC...** (`Ctrl+Shift+P`) — interactive wizard to choose media and machine configuration. The last parameters are remembered and offered at the top of the list for instant relaunch.
 
-### Création de projet
+### Project creation
 
-**Z80 Debug: New CPC Project...** — génère un projet complet avec :
-- `src/main.asm` (template Hello World ou squelette vide)
-- `.vscode/tasks.json` (tâche RASM)
-- `.vscode/launch.json` (configurations launch + attach)
-- `.vscode/settings.json` (settings du projet)
+**Z80 Debug: New CPC Project...** — generates a complete project with:
+- `src/main.asm` (Hello World template or empty skeleton)
+- `.vscode/tasks.json` (RASM build task)
+- `.vscode/launch.json` (launch + attach configurations)
+- `.vscode/settings.json` (project settings)
 - `.gitignore`
 
 ---
@@ -222,28 +224,28 @@ VS Code (DAP client)
     ↕  DAP inline (stdio)
 Z80DebugSession.ts  (debug adapter)
     ↕  JSON/TCP port 1234
-Émulateur CPC (ex: SugarboxV2 DebugServer.cpp)
-    ↕  appels directs
-Machine Z80 / hardware
+CPC Emulator (e.g. SugarboxV2 DebugServer.cpp)
+    ↕  direct calls
+Z80 CPU / hardware
 ```
 
-En mode `launch`, l'adapter :
-1. Génère un script CSL temporaire si un média est fourni
-2. Lance l'émulateur : `<emulator> --debug --debug_server <port> [--csl <file>] [--cfg <name>] [--hide]`
-3. Attend l'ouverture du port TCP (retry 250 ms, timeout 10 s)
-4. Se connecte, envoie la commande `loadSnapshot` si un `.sna` est spécifié
-5. Envoie `InitializedEvent` → VS Code envoie `configurationDone` → émulateur s'arrête sur `entry`
+In `launch` mode, the adapter:
+1. Writes a temporary CSL script if media is provided
+2. Spawns the emulator: `<emulator> --debug --debug_server <port> [--csl <file>] [--cfg <name>] [--hide]`
+3. Polls the TCP port until it opens (retry every 250 ms, 10 s timeout)
+4. Connects, sends `loadSnapshot` if a `.sna` is specified
+5. Sends `InitializedEvent` → VS Code sends `configurationDone` → emulator breaks on `entry`
 
 ---
 
-## Compatibilité émulateurs
+## Emulator compatibility
 
-L'extension fonctionne avec tout émulateur qui implémente le protocole TCP JSON décrit dans [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md). Les commandes hardware (panneaux CRTC, FDC, etc.) sont optionnelles : l'extension répond gracieusement si elles ne sont pas supportées.
+The extension works with any emulator that implements the TCP JSON protocol described in [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md). Hardware commands (CRTC, FDC panels, etc.) are optional: the extension degrades gracefully if they are not supported.
 
 ---
 
-## Limitations
+## Known limitations
 
-- Les breakpoints sur fichiers source `.asm` réels ne sont pas supportés (uniquement sur le désassemblage virtuel et via labels).
-- Un seul thread Z80 est exposé.
-- Timeout de réponse de l'émulateur : 10 s par commande.
+- Breakpoints on real `.asm` source files are not supported (only on virtual disassembly and via labels).
+- A single Z80 thread is exposed.
+- Emulator response timeout: 10 s per command.

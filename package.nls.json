@@ -2,6 +2,7 @@
     "cmd.newProject":         "New CPC Project...",
     "cmd.quickLaunch":        "Launch CPC...",
     "cmd.configure":          "Configure Z80 Debug",
+    "cmd.configureProject":   "Configure CPC Project (cpc.json)…",
     "cmd.openDisasmAt":       "Open Disassembly at Address…",
     "cmd.openMemoryAt":       "Open Memory View at Address…",
     "cmd.addBreakpointAt":    "Add Breakpoint at Address or Label…",
@@ -15,7 +16,7 @@
 
     "view.launcher": "Amstrad CPC",
     "view.hardware": "CPC Hardware",
-    "view.launcher.welcome": "[$(add) New CPC Project...](command:z80debug.newProject)\n[$(run) Launch CPC...](command:z80debug.quickLaunch)\n[$(tools) Configure](command:z80debug.configure)",
+    "view.launcher.welcome": "[$(add) New CPC Project...](command:z80debug.newProject)\n[$(run) Launch CPC...](command:z80debug.quickLaunch)\n[$(settings-gear) CPC Project Config...](command:z80debug.configureProject)\n[$(tools) Configure](command:z80debug.configure)",
 
     "dbg.label": "Z80 Emulator",
 

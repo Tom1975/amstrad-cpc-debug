@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CPC Project Configuration",
+  "description": "Amstrad CPC project configuration for the amstrad-cpc-debug extension.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "configuration": {
+      "type": "string",
+      "description": "Hardware configuration name passed to Sugarbox via --cfg (e.g. CPC6128FR, CPC464UK, CPC+). Matches a .cfg file in Sugarbox's CONF/ directory.",
+      "examples": ["CPC6128FR", "CPC6128UK", "CPC464FR", "CPC464UK", "CPC464FRDDI1", "CPC6128PLUSEN", "CPC+"]
+    },
+    "launch": {
+      "type": "object",
+      "description": "Debug launch configuration.",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["disk", "snapshot", "tape", "cartridge", "plain"],
+          "description": "How the emulator is loaded: disk image, snapshot, tape, cartridge ROM, or plain boot."
+        },
+        "disk": {
+          "type": "string",
+          "description": "Path to the disk A image (.dsk). Supports ${buildName}.",
+          "examples": ["build/${buildName}.dsk"]
+        },
+        "diskB": {
+          "type": "string",
+          "description": "Path to the optional disk B image (.dsk)."
+        },
+        "tape": {
+          "type": "string",
+          "description": "Path to the tape file (.cdt / .tzx / .wav). Supports ${buildName}.",
+          "examples": ["build/${buildName}.cdt"]
+        },
+        "snapshot": {
+          "type": "string",
+          "description": "Path to the snapshot file (.sna). Supports ${buildName}.",
+          "examples": ["build/${buildName}.sna"]
+        },
+        "cartridge": {
+          "type": "string",
+          "description": "Path to the cartridge ROM (.cpr). CPC+ only.",
+          "examples": ["build/${buildName}.cpr"]
+        },
+        "symbolFile": {
+          "type": "string",
+          "description": "Path to the RASM symbol file (.rasm) for label resolution in the debugger. Supports ${buildName}.",
+          "examples": ["build/${buildName}.rasm"]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 1234,
+          "description": "TCP port for the Sugarbox debug server."
+        }
+      }
+    }
+  }
+}

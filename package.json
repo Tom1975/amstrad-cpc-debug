@@ -16,6 +16,17 @@
   ],
   "main": "./dist/main.js",
   "contributes": {
+    "configurationDefaults": {
+      "[z80-disasm]": {
+        "editor.colorDecorators": false
+      }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "cpc.json",
+        "url": "./schemas/cpc.schema.json"
+      }
+    ],
     "configuration": {
       "title": "%cfg.title%",
       "properties": {
@@ -81,6 +92,11 @@
       {
         "command": "z80debug.configure",
         "title": "%cmd.configure%",
+        "category": "Z80 Debug"
+      },
+      {
+        "command": "z80debug.configureProject",
+        "title": "%cmd.configureProject%",
         "category": "Z80 Debug"
       },
       {
@@ -204,6 +220,9 @@
         },
         {
           "command": "z80debug.quickLaunch"
+        },
+        {
+          "command": "z80debug.configureProject"
         },
         {
           "command": "z80debug.openDisasmAt",

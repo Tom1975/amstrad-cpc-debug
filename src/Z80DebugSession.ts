@@ -297,24 +297,30 @@ protected async launchRequest(
     }
     console.log("DAP: Connected to emulator");
 
-    // Load snapshot via DAP command — send file content as base64 to avoid
-    // path-resolution issues (relative paths, remote machines, etc.)
+    // Load snapshot via path — the emulator runs on the same machine so it can
+    // read the file directly. Sending base64 exceeds the C++ TCP buffer (4096 bytes).
     if (args.snapshot) {
         console.log("DAP: Loading snapshot", args.snapshot);
-        let snapshotData: string;
-        try {
-            snapshotData = fs.readFileSync(args.snapshot).toString("base64");
-        } catch (e: any) {
-            const msg = `Cannot read snapshot file "${args.snapshot}": ${e.message}\n`;
+        if (!fs.existsSync(args.snapshot)) {
+            const msg = `Cannot read snapshot file "${args.snapshot}": file not found\n`;
             this.sendEvent(new OutputEvent(msg, "stderr"));
             response.success = false;
             (response as any).message = msg.trim();
             this.sendResponse(response);
             return;
         }
-        const r = await this.emulator.send({ cmd: "loadSnapshot", data: snapshotData });
-        if (r?.status !== "ok") {
-            const msg = `Failed to load snapshot: ${r?.message ?? args.snapshot}\n`;
+        try {
+            const r = await this.emulator.send({ cmd: "loadSnapshot", path: args.snapshot });
+            if (r?.status !== "ok") {
+                const msg = `Failed to load snapshot: ${r?.message ?? args.snapshot}\n`;
+                this.sendEvent(new OutputEvent(msg, "stderr"));
+                response.success = false;
+                (response as any).message = msg.trim();
+                this.sendResponse(response);
+                return;
+            }
+        } catch (e: any) {
+            const msg = `loadSnapshot timed out or failed: ${e.message}\n`;
             this.sendEvent(new OutputEvent(msg, "stderr"));
             response.success = false;
             (response as any).message = msg.trim();
@@ -426,6 +432,8 @@ protected async configurationDoneRequest(
         const state = await this.emulator.send({ cmd: "getState" });
         if (!state?.running) {
             this.sendEvent(new StoppedEvent("pause", 1));
+        } else {
+            this.sendEvent(new ContinuedEvent(1));
         }
     } else {
         this.sendEvent(new StoppedEvent("entry", 1));

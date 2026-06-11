@@ -12,6 +12,8 @@ import { FdcPanel } from "./FdcPanel";
 import { TapePanel } from "./TapePanel";
 import { HardwarePanelTreeProvider } from "./HardwarePanelTreeProvider";
 import { ConfigPanel } from "./ConfigPanel";
+import { ProjectPanel } from "./ProjectPanel";
+import { CpcConfig } from "./CpcConfig";
 import { initI18n, t } from "./i18n";
 
 // ─── Disassembly virtual document provider ────────────────────────────────────
@@ -42,7 +44,7 @@ class Z80DisasmProvider implements vscode.TextDocumentContentProvider {
         const addr = parseInt(hex, 16);
         if (isNaN(addr)) return `; Invalid address: ${uri.path}`;
 
-        const session = vscode.debug.activeDebugSession;
+        const session = currentZ80Session ?? vscode.debug.activeDebugSession;
         if (!session) return `; No active debug session`;
 
         try {
@@ -62,6 +64,7 @@ let pcDecoration: vscode.TextEditorDecorationType;
 const bpAddresses = new Set<number>();
 const BP_DIRECT_KEY = "z80bp.direct";
 let currentPcAddress: number | undefined;
+let currentZ80Session: vscode.DebugSession | undefined;
 
 function refreshZ80BpDecorations() {
     for (const editor of vscode.window.visibleTextEditors) {
@@ -140,7 +143,9 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.debug.registerDebugAdapterTrackerFactory("z80", {
             createDebugAdapterTracker(session: vscode.DebugSession) {
+                currentZ80Session = session;
                 return {
+                    onWillStopSession() { currentZ80Session = undefined; },
                     onDidSendMessage(message: any) {
                         if (message.type === "response" && message.command === "configurationDone" && message.success) {
                             // Re-apply persisted direct breakpoints to the new session
@@ -181,12 +186,11 @@ export function activate(context: vscode.ExtensionContext) {
                                     )?.viewColumn ?? vscode.ViewColumn.Active;
 
                                     vscode.workspace.openTextDocument(frameUri)
-                                        .then(doc => Promise.resolve(
-                                            vscode.window.showTextDocument(doc, {
-                                                viewColumn: existingCol,
-                                                preview:    false
-                                            })
-                                        ), () => {});
+                                        .then(doc => vscode.window.showTextDocument(doc, {
+                                            viewColumn:    existingCol,
+                                            preview:       false,
+                                            preserveFocus: false
+                                        }), () => {});
                                 }
                             }
                         } else if (
@@ -393,16 +397,53 @@ export function activate(context: vscode.ExtensionContext) {
     // ── Clear PC decoration when session ends (keep BP decorations) ──────────
     context.subscriptions.push(
         vscode.debug.onDidTerminateDebugSession(() => {
-            currentPcAddress = undefined;
+            currentPcAddress  = undefined;
+            currentZ80Session = undefined;
             refreshPcDecoration();
         })
     );
 
     // ── Commands: configure + project + quick launch ──────────────────────────
     context.subscriptions.push(
-        vscode.commands.registerCommand("z80debug.configure",   () => ConfigPanel.createOrShow(context)),
-        vscode.commands.registerCommand("z80debug.newProject",  newProject),
-        vscode.commands.registerCommand("z80debug.quickLaunch", () => quickLaunch(context))
+        vscode.commands.registerCommand("z80debug.configure",        () => ConfigPanel.createOrShow(context)),
+        vscode.commands.registerCommand("z80debug.configureProject", () => ProjectPanel.createOrShow(context)),
+        vscode.commands.registerCommand("z80debug.newProject",       newProject),
+        vscode.commands.registerCommand("z80debug.quickLaunch",      () => quickLaunch(context))
+    );
+
+    // ── DebugConfigurationProvider: merge cpc.json into launch config ─────────
+    context.subscriptions.push(
+        vscode.debug.registerDebugConfigurationProvider("z80", {
+            resolveDebugConfiguration(
+                folder: vscode.WorkspaceFolder | undefined,
+                config: vscode.DebugConfiguration
+            ): vscode.DebugConfiguration {
+                if (!folder) return config;
+                const raw = CpcConfig.read(folder.uri.fsPath);
+                if (!raw) return config;
+                const buildName = vscode.workspace.getConfiguration("z80debug")
+                    .get<string>("buildName", "main");
+                const resolved = CpcConfig.resolve(raw, buildName, folder.uri.fsPath);
+                // Only fill fields not already set by launch.json / quickLaunch
+                if (!config.configuration && resolved.configuration)
+                    config.configuration = resolved.configuration;
+                if (!config.disk        && resolved.launch?.disk)
+                    config.disk        = resolved.launch.disk;
+                if (!config.diskB       && resolved.launch?.diskB)
+                    config.diskB       = resolved.launch.diskB;
+                if (!config.tape        && resolved.launch?.tape)
+                    config.tape        = resolved.launch.tape;
+                if (!config.snapshot    && resolved.launch?.snapshot)
+                    config.snapshot    = resolved.launch.snapshot;
+                if (!config.cartridge   && resolved.launch?.cartridge)
+                    config.cartridge   = resolved.launch.cartridge;
+                if (!config.symbolFile  && resolved.launch?.symbolFile)
+                    config.symbolFile  = resolved.launch.symbolFile;
+                if (!config.port        && resolved.launch?.port)
+                    config.port        = resolved.launch.port;
+                return config;
+            }
+        })
     );
 
     checkConfiguration();
@@ -451,6 +492,12 @@ async function newProject(): Promise<void> {
             description: t("np.template.empty.desc"),
             detail: t("np.template.empty.detail"),
             id: "empty"
+        },
+        {
+            label: t("np.template.cartridge.label"),
+            description: t("np.template.cartridge.desc"),
+            detail: t("np.template.cartridge.detail"),
+            id: "cartridge"
         }
     ], {
         title: t("np.template.title"),
@@ -476,13 +523,20 @@ async function newProject(): Promise<void> {
     const sugarboxPath = globalCfg.get<string>("sugarbox") || "";
     const rasmPath     = globalCfg.get<string>("rasm")     || "rasm";
 
-    fs.writeFileSync(nodePath.join(srcDir, "main.asm"),
-        templateChoice.id === "hello" ? templateHello(projectName) : templateEmpty(projectName));
+    const isCartridge = templateChoice.id === "cartridge";
 
-    fs.writeFileSync(nodePath.join(vscodeDir, "tasks.json"),    tasksJson());
+    const asmSource =
+        templateChoice.id === "hello"      ? templateHello(projectName) :
+        templateChoice.id === "cartridge"  ? templateCartridge(projectName) :
+                                             templateEmpty(projectName);
+    fs.writeFileSync(nodePath.join(srcDir, "main.asm"), asmSource);
+
+    fs.writeFileSync(nodePath.join(vscodeDir, "tasks.json"),    tasksJson(isCartridge));
     fs.writeFileSync(nodePath.join(vscodeDir, "launch.json"),   launchJson());
     fs.writeFileSync(nodePath.join(vscodeDir, "settings.json"), settingsJson(projectName, sugarboxPath, rasmPath));
     fs.writeFileSync(nodePath.join(projectDir, ".gitignore"),   "build/\n");
+    CpcConfig.write(projectDir,
+        isCartridge ? CpcConfig.defaultCartridge(projectName) : CpcConfig.default(projectName));
 
     const newUri = vscode.Uri.file(projectDir);
     const choice = await vscode.window.showInformationMessage(
@@ -502,25 +556,25 @@ async function newProject(): Promise<void> {
 function templateHello(name: string): string {
     return `\
 ; ── ${name} ${"─".repeat(Math.max(0, 78 - name.length))}
-; ${t("tmpl.built-with")}
-; ${t("tmpl.call-from-basic")}
+; Built with RASM — press F5 to build and debug.
+; From CPC Basic: CALL &8000
 ; ${"─".repeat(78)}
 
         BANKSET 0
         ORG     #8000
         RUN     start
 
-; ── ${t("tmpl.entry-point")} ${"─".repeat(Math.max(0, 70 - t("tmpl.entry-point").length))}
+; ── Entry point ${"─".repeat(63)}
 start:
         ld      hl, msg_hello
         call    print_string
 
-        ; ${t("tmpl.infinite-loop")}
+        ; Infinite loop (debugger stops here by default)
 loop:
         jr      loop
 
-; ── ${t("tmpl.subroutine")} ${"─".repeat(Math.max(0, 70 - t("tmpl.subroutine").length))}
-; ${t("tmpl.subroutine.input")}
+; ── Subroutine: print a null-terminated string ${"─".repeat(32)}
+; Input: HL → string address
 print_string:
         ld      a, (hl)
         or      a
@@ -529,10 +583,10 @@ print_string:
         inc     hl
         jr      print_string
 
-; ── ${t("tmpl.firmware")} ${"─".repeat(Math.max(0, 70 - t("tmpl.firmware").length))}
+; ── Firmware constants ${"─".repeat(56)}
 TXT_OUTPUT      EQU     #BB5A
 
-; ── ${t("tmpl.data")} ${"─".repeat(Math.max(0, 70 - t("tmpl.data").length))}
+; ── Data ${"─".repeat(70)}
 msg_hello:
         db      "Hello, World!", 13, 0
 `;
@@ -541,26 +595,72 @@ msg_hello:
 function templateEmpty(name: string): string {
     return `\
 ; ── ${name} ${"─".repeat(Math.max(0, 78 - name.length))}
-; ${t("tmpl.built-with")}
-; ${t("tmpl.call-from-basic")}
+; Built with RASM — press F5 to build and debug.
+; From CPC Basic: CALL &8000
 ; ${"─".repeat(78)}
 
         BANKSET 0
         ORG     #8000
         RUN     start
 
-; ── ${t("tmpl.entry-point")} ${"─".repeat(Math.max(0, 70 - t("tmpl.entry-point").length))}
+; ── Entry point ${"─".repeat(63)}
 start:
-        ; ${t("tmpl.your-code")}
+        ; Your code here
 
 
-        ; ${t("tmpl.bare-loop")}
+        ; Infinite loop
 loop:
         jr      loop
 `;
 }
 
-function tasksJson(): string {
+function templateCartridge(name: string): string {
+    return `\
+; ── ${name} ${"─".repeat(Math.max(0, 78 - name.length))}
+; Built with RASM — press F5 to build and debug.
+; Amstrad CPC+ Cartridge — RASM -cpr
+; ${"─".repeat(78)}
+
+        BUILDCPR                ; Tell RASM to produce a .cpr cartridge file
+
+; ── Bank 0 — primary ROM ${"─".repeat(54)}
+        BANK    0               ; ROM bank 0, mapped to #C000–#FFFF
+        ORG     #C000           ; Cartridge ROM entry point (CPC+ auto-starts here)
+
+; ── Entry point ${"─".repeat(63)}
+start:
+        di                      ; Disable interrupts during init
+        ld      sp, #C000       ; Stack pointer below ROM bank
+
+        ; Your code here
+
+
+        ; Infinite loop
+loop:
+        jr      loop
+
+; ── CPC+ firmware (KL_* calls) ${"─".repeat(48)}
+; CPC+ firmware calls use the KL_ prefix (different addresses from standard CPC).
+; KL_TIME_PLEASE  EQU  #BD0D   ; example: get time
+`;
+}
+
+function tasksJson(cartridge = false): string {
+    const assembleArgs = cartridge
+        ? [
+            "${workspaceFolder}/${config:z80debug.entryPoint}",
+            "-cpr",  "${workspaceFolder}/build/${config:z80debug.buildName}.cpr",
+            "-rasm",
+            "-sq"
+          ]
+        : [
+            "${workspaceFolder}/${config:z80debug.entryPoint}",
+            "-o",   "${workspaceFolder}/build/${config:z80debug.buildName}",
+            "-oi",  "${workspaceFolder}/build/${config:z80debug.buildName}.sna",
+            "-rasm",
+            "-sq"
+          ];
+
     return JSON.stringify({
         version: "2.0.0",
         tasks: [
@@ -578,13 +678,7 @@ function tasksJson(): string {
                 label: "RASM: assemble",
                 type: "shell",
                 command: "${config:z80debug.rasm}",
-                args: [
-                    "${workspaceFolder}/${config:z80debug.entryPoint}",
-                    "-o",   "${workspaceFolder}/build/${config:z80debug.buildName}",
-                    "-oi",  "${workspaceFolder}/build/${config:z80debug.buildName}.sna",
-                    "-rasm",
-                    "-sq"
-                ],
+                args: assembleArgs,
                 dependsOn: ["Create build dir"],
                 group: { kind: "build", isDefault: true },
                 presentation: { reveal: "always", panel: "shared" },
@@ -603,19 +697,16 @@ function launchJson(): string {
                 request: "launch",
                 name: t("launch.debugName"),
                 emulator: "${config:z80debug.sugarbox}",
-                snapshot:   "${workspaceFolder}/build/${config:z80debug.buildName}.sna",
-                symbolFile: "${workspaceFolder}/build/${config:z80debug.buildName}.rasm",
                 sourceFile: "${workspaceFolder}/${config:z80debug.entryPoint}",
-                port: 1234,
                 hideEmulator: false,
                 preLaunchTask: "RASM: assemble"
+                // Media, configuration, symbolFile and port are read from cpc.json
             },
             {
                 type: "z80",
                 request: "attach",
                 name: t("launch.attachName"),
-                port: 1234,
-                symbolFile: "${workspaceFolder}/build/${config:z80debug.buildName}.rasm"
+                port: 1234
             }
         ]
     }, null, 2);
@@ -801,6 +892,10 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
         }
     }
 
+    // Read cpc.json to pre-select the CPC model
+    const cpcJson = folder ? CpcConfig.read(folder.uri.fsPath) : null;
+    const cpcJsonCfg = cpcJson?.configuration;
+
     const configItems: ConfigItem[] = [
         { label: t("ql.config.cpc6128"),  description: t("ql.config.cpc6128.desc"), cfg: undefined     },
         { label: t("ql.config.cpc464"),   description: "",                            cfg: "CPC464"      },
@@ -809,10 +904,20 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
         { label: t("ql.config.custom"),   description: t("ql.config.custom.desc"),   cfg: "__custom__"  },
     ];
 
-    // Reorder config list: last used config at the top
-    if (lastLaunch?.configuration) {
-        const lastIdx = configItems.findIndex(i => i.cfg === lastLaunch.configuration);
-        if (lastIdx > 0) configItems.unshift(configItems.splice(lastIdx, 1)[0]);
+    // Prefer cpc.json config, then last launch config
+    const preferredCfg = cpcJsonCfg ?? lastLaunch?.configuration;
+    if (preferredCfg) {
+        const preferredIdx = configItems.findIndex(i => i.cfg === preferredCfg);
+        if (preferredIdx > 0) {
+            configItems.unshift(configItems.splice(preferredIdx, 1)[0]);
+        } else if (preferredIdx < 0) {
+            // Unknown value (custom config from cpc.json): insert as first option
+            configItems.unshift({
+                label: preferredCfg,
+                description: cpcJsonCfg ? t("ql.config.cpc6128.desc").replace(/.*/, `from cpc.json`) : "",
+                cfg: preferredCfg
+            });
+        }
     }
 
     const configChoice = await vscode.window.showQuickPick(configItems, {
