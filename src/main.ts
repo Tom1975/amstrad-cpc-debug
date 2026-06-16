@@ -618,19 +618,19 @@ function templateCartridge(name: string): string {
     return `\
 ; ── ${name} ${"─".repeat(Math.max(0, 78 - name.length))}
 ; Built with RASM — press F5 to build and debug.
-; Amstrad CPC+ Cartridge — RASM -cpr
+; Amstrad CPC+ Cartridge
 ; ${"─".repeat(78)}
 
         BUILDCPR                ; Tell RASM to produce a .cpr cartridge file
 
-; ── Bank 0 — primary ROM ${"─".repeat(54)}
-        BANK    0               ; ROM bank 0, mapped to #C000–#FFFF
-        ORG     #C000           ; Cartridge ROM entry point (CPC+ auto-starts here)
+; ── Bank 0 — primary ROM (#0000–#3FFF, lower ROM) ${"─".repeat(30)}
+        BANK    0               ; ROM bank 0 : CPC+ maps it at #0000–#3FFF at boot
+        ORG     #0000           ; Z80 boots here (PC=0, no separate firmware on CPC+)
 
 ; ── Entry point ${"─".repeat(63)}
 start:
         di                      ; Disable interrupts during init
-        ld      sp, #C000       ; Stack pointer below ROM bank
+        ld      sp, #8000       ; Stack in RAM (write access above #4000)
 
         ; Your code here
 
@@ -638,10 +638,6 @@ start:
         ; Infinite loop
 loop:
         jr      loop
-
-; ── CPC+ firmware (KL_* calls) ${"─".repeat(48)}
-; CPC+ firmware calls use the KL_ prefix (different addresses from standard CPC).
-; KL_TIME_PLEASE  EQU  #BD0D   ; example: get time
 `;
 }
 
@@ -649,7 +645,7 @@ function tasksJson(cartridge = false): string {
     const assembleArgs = cartridge
         ? [
             "${workspaceFolder}/${config:z80debug.entryPoint}",
-            "-cpr",  "${workspaceFolder}/build/${config:z80debug.buildName}.cpr",
+            "-o",    "${workspaceFolder}/build/${config:z80debug.buildName}",
             "-rasm",
             "-sq"
           ]
