@@ -242,10 +242,29 @@ protected async launchRequest(
     // failure response instead.
     let launchCompleted = false;
 
+    // Build env for the emulator process.
+    // On WSL2, VS Code launched from Windows (WSLg) doesn't inherit display-related
+    // variables from the user's shell, causing Mesa/EGL to fail. Inject sane defaults
+    // if the vars are absent, then overlay any user-defined emulatorEnv from launch.json.
+    const spawnEnv: NodeJS.ProcessEnv = { ...process.env };
+    const isWsl2 = process.env["WSL_INTEROP"] !== undefined
+                || process.env["WSL_DISTRO_NAME"] !== undefined;
+    if (isWsl2) {
+        if (!spawnEnv["DISPLAY"])         spawnEnv["DISPLAY"]         = ":0";
+        if (!spawnEnv["WAYLAND_DISPLAY"]) spawnEnv["WAYLAND_DISPLAY"] = "wayland-0";
+        if (!spawnEnv["XDG_RUNTIME_DIR"]) {
+            const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+            spawnEnv["XDG_RUNTIME_DIR"] = `/run/user/${uid}`;
+        }
+    }
+    // User overrides always win
+    Object.assign(spawnEnv, args.emulatorEnv ?? {});
+
     this.emulatorProcess = cp.spawn(args.emulator, spawnArgs, {
         stdio: ["ignore", "ignore", "pipe"],
         detached: true,  // GUI process — survit si le parent Node.js est tué
-        cwd: emulatorDir
+        cwd: emulatorDir,
+        env: spawnEnv
     });
     // Relay emulator stderr to the Debug Console for diagnostics
     this.emulatorProcess.stderr?.on("data", (data: Buffer) => {
