@@ -1000,8 +1000,9 @@ protected async setInstructionBreakpointsRequest(
     const bps = args.breakpoints ?? [];
 
     const addresses = bps.map(bp => {
-        const [type, addrHex] = bp.instructionReference.split(":");
-        return parseInt(addrHex, 16) + (bp.offset ?? 0);
+        // instructionReference format is "0xNNNN" (hex address with 0x prefix)
+        const addr = parseInt(bp.instructionReference.replace(/^0x/i, ""), 16);
+        return (isNaN(addr) ? 0 : addr) + (bp.offset ?? 0);
     });
 
     this.bpRegistry.set("instr", addresses);

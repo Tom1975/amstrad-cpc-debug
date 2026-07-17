@@ -756,15 +756,18 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
     let projectSna:     string | undefined;
     let projectSymbols: string | undefined;
     let projectDsk:     string | undefined;
+    let projectCpr:     string | undefined;
 
     if (folder) {
         const buildDir = nodePath.join(folder.uri.fsPath, "build");
         const snaPath  = nodePath.join(buildDir, `${buildName}.sna`);
         const rasmPath = nodePath.join(buildDir, `${buildName}.rasm`);
         const dskPath  = nodePath.join(buildDir, `${buildName}.dsk`);
+        const cprPath  = nodePath.join(buildDir, `${buildName}.cpr`);
         if (fs.existsSync(snaPath))  projectSna     = snaPath;
         if (fs.existsSync(rasmPath)) projectSymbols = rasmPath;
         if (fs.existsSync(dskPath))  projectDsk     = dskPath;
+        if (fs.existsSync(cprPath))  projectCpr     = cprPath;
     }
 
     const symSuffix = projectSymbols ? t("ql.media.symbols.suffix") : "";
@@ -794,6 +797,18 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
             description: t("ql.media.projectDisk.desc", buildName, symSuffix),
             detail:      projectDsk,
             media:       "projectDisk"
+        }] : []),
+        ...(projectCpr ? [{
+            label:       t("ql.media.projectCartridge"),
+            description: t("ql.media.projectCartridge.desc", buildName, symSuffix),
+            detail:      projectCpr,
+            media:       "projectCartridge"
+        }] : []),
+        ...(projectCpr ? [{
+            label:       t("ql.media.projectCartridgeBuild"),
+            description: t("ql.media.projectCartridgeBuild.desc", buildName),
+            detail:      t("ql.media.projectCartridgeBuild.detail"),
+            media:       "projectCartridgeBuild"
         }] : []),
         { label: t("ql.media.empty"),    description: t("ql.media.empty.desc"),    media: "empty"     },
         { label: t("ql.media.diskA"),    description: t("ql.media.diskA.desc"),    media: "disk",
@@ -837,6 +852,10 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
         } else if (lastLaunch.media === "projectDisk") {
             launchCfg.disk = projectDsk;
             if (projectSymbols) launchCfg.symbolFile = projectSymbols;
+        } else if (lastLaunch.media === "projectCartridge" || lastLaunch.media === "projectCartridgeBuild") {
+            launchCfg.cartridge = projectCpr;
+            if (projectSymbols) launchCfg.symbolFile = projectSymbols;
+            if (lastLaunch.media === "projectCartridgeBuild") launchCfg.preLaunchTask = "RASM: assemble";
         }
         await vscode.debug.startDebugging(folder, launchCfg);
         return;
@@ -863,6 +882,15 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
             launchCfg.disk = projectDsk;
             if (projectSymbols) launchCfg.symbolFile = projectSymbols;
             break;
+        case "projectCartridge":
+            launchCfg.cartridge = projectCpr;
+            if (projectSymbols) launchCfg.symbolFile = projectSymbols;
+            break;
+        case "projectCartridgeBuild":
+            launchCfg.cartridge      = projectCpr;
+            launchCfg.preLaunchTask  = "RASM: assemble";
+            if (projectSymbols) launchCfg.symbolFile = projectSymbols;
+            break;
         case "empty":
             break;
         default: {
@@ -884,6 +912,9 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
             if (!files) return;
             chosenFile = files[0].fsPath;
             (launchCfg as any)[mediaChoice.media] = chosenFile;
+            // For cartridge file picker, also attach symbols from the project if available
+            if (mediaChoice.media === "cartridge" && projectSymbols && !launchCfg.symbolFile)
+                launchCfg.symbolFile = projectSymbols;
             break;
         }
     }

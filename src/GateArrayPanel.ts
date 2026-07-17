@@ -164,8 +164,30 @@ ${HardwarePanel.commonCss()}
 <script>
 const vscode = acquireVsCodeApi();
 
-let prevInks   = null;
-let prevBorder = null;
+let prevInks    = null;
+let prevBorder  = null;
+let prevInkRegs = null;
+
+// Maps raw GA color byte (data & 0x5F) to CPC hardware color index 0-26
+// ListeColorsIndexConvert from GateArray.cpp: index i → raw byte
+const CPC_RAW_TO_INDEX = new Uint8Array(0x60).fill(255);
+const CONVERT = [0x54,0x44,0x55,0x5c,0x58,0x5D,0x4c,0x45,0x4d,0x56,0x46,0x57,0x5e,0x40,0x5f,0x4e,0x47,0x4f,0x52,0x42,0x53,0x5a,0x59,0x5b,0x4a,0x43,0x4b];
+for (let i = 0; i < 27; i++) CPC_RAW_TO_INDEX[CONVERT[i]] = i;
+// Alias: 0x60-0x7F → same as 0x40-0x5F (case 0x60 in GA)
+for (let b = 0x40; b < 0x60; b++) if (CPC_RAW_TO_INDEX[b] !== 255) CPC_RAW_TO_INDEX[b & 0x5F] = CPC_RAW_TO_INDEX[b];
+
+const CPC_COLOR_NAMES = [
+    'Black','Blue','Bright Blue','Red','Magenta','Mauve',
+    'Bright Red','Purple','Bright Magenta','Green','Cyan','Sky Blue',
+    'Yellow','White','Pastel Blue','Orange','Pink','Pastel Magenta',
+    'Bright Green','Sea Green','Bright Cyan','Lime','Pastel Green',
+    'Pastel Cyan','Bright Yellow','Pastel Yellow','Bright White'
+];
+
+function cpcColorFromReg(reg) {
+    const idx = CPC_RAW_TO_INDEX[reg & 0x5F] ?? 255;
+    return { idx, name: idx < 27 ? CPC_COLOR_NAMES[idx] : '?' };
+}
 
 function argbToRgb(v) {
     const r = (v >>> 16) & 0xFF;
@@ -177,38 +199,42 @@ function argbToRgb(v) {
 function luminance(r, g, b) { return 0.299*r + 0.587*g + 0.114*b; }
 
 function renderPalette(state) {
-    const inks  = state.inks;   // array[16]
-    const pen   = state.pen ?? 0;
-    const grid  = document.getElementById('paletteGrid');
+    const inks    = state.inks;      // array[16] ARGB
+    const inkRegs = state.inkRegs;   // array[16] raw GA byte
+    const pen     = state.pen ?? 0;
+    const grid    = document.getElementById('paletteGrid');
     grid.innerHTML = '';
 
     for (let i = 0; i < 16; i++) {
-        const col     = argbToRgb(inks[i]);
-        const changed = prevInks && prevInks[i] !== inks[i];
+        const col      = argbToRgb(inks[i]);
+        const cpc      = inkRegs ? cpcColorFromReg(inkRegs[i]) : { idx: '?', name: '' };
+        const changed  = prevInkRegs ? (prevInkRegs[i] !== (inkRegs?.[i] ?? -1)) : false;
         const isActive = (i === pen);
-        const lum     = luminance(col.r, col.g, col.b);
+        const lum      = luminance(col.r, col.g, col.b);
         const labelCol = lum > 128 ? '#000' : '#fff';
 
         const div = document.createElement('div');
         div.className = 'swatch' + (isActive ? ' active-pen' : '') + (changed ? ' changed' : '');
-        div.title = \`INK \${i} — \${col.hex}\${isActive ? ' (selected pen)' : ''}\`;
+        div.title = \`INK \${i} — CPC color \${cpc.idx} (\${cpc.name}) — \${col.hex}\${isActive ? ' (selected pen)' : ''}\`;
         div.innerHTML =
             \`<div class="color-box" style="background:\${col.css}; color:\${labelCol}"></div>\` +
-            \`<div class="swatch-label">\${i}<br>\${col.hex}</div>\`;
+            \`<div class="swatch-label">\${i}<br><b>\${cpc.idx}</b> \${cpc.name}</div>\`;
         grid.appendChild(div);
     }
-    prevInks = inks.slice();
+    prevInks    = inks.slice();
+    prevInkRegs = inkRegs ? inkRegs.slice() : null;
 }
 
 function renderBorder(state) {
-    const col = argbToRgb(state.border ?? 0);
-    const changed = prevBorder !== null && prevBorder !== state.border;
+    const col    = argbToRgb(state.border ?? 0);
+    const cpc    = state.borderReg !== undefined ? cpcColorFromReg(state.borderReg) : { idx: '?', name: '' };
+    const changed = prevBorder !== null && prevBorder !== (state.borderReg ?? state.border);
     document.getElementById('borderBox').style.background = col.css;
     const hexEl = document.getElementById('borderHex');
-    hexEl.textContent = col.hex;
+    hexEl.textContent = \`\${cpc.idx} \${cpc.name}\`;
     if (changed) hexEl.style.background = 'var(--diff-ins)';
     else         hexEl.style.background = '';
-    prevBorder = state.border;
+    prevBorder = state.borderReg ?? state.border;
 }
 
 function flag(label, on, warn) {
