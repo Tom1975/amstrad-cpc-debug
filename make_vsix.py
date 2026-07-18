@@ -10,11 +10,18 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
 
 EXT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def resolve(cmd):
+    """Resolve a command to its full path (needed on Windows, where npm/code
+    are .cmd shims that CreateProcess can't launch by bare name)."""
+    return shutil.which(cmd) or cmd
 
 EXCLUDE_DIRS = {
     "node_modules", ".git", "__pycache__",
@@ -91,6 +98,12 @@ def manifest_xml(pkg, version):
 
 
 def main():
+    # Windows consoles default to a non-UTF-8 codepage (e.g. cp1252), which
+    # can't encode the arrow characters used in the progress messages below.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="Build z80-debug VSIX")
     parser.add_argument("--version", help="Override version (default: from package.json)")
     parser.add_argument("--no-compile", action="store_true", help="Skip TypeScript compilation")
@@ -107,7 +120,7 @@ def main():
 
     if not args.no_compile:
         print("Compiling TypeScript + bundling...")
-        r = subprocess.run(["npm", "run", "bundle"], capture_output=True, text=True)
+        r = subprocess.run([resolve("npm"), "run", "bundle"], capture_output=True, text=True)
         if r.returncode != 0:
             print(r.stdout)
             print(r.stderr)
@@ -128,7 +141,7 @@ def main():
 
     if args.install:
         print("Installing in VS Code...")
-        r = subprocess.run(["code", "--install-extension", vsix_name])
+        r = subprocess.run([resolve("code"), "--install-extension", vsix_name])
         if r.returncode != 0:
             sys.exit(1)
         print("  Done — reload VS Code (Ctrl+Shift+P → Developer: Reload Window)")

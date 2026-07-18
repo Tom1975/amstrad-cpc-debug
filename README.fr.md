@@ -15,7 +15,8 @@ L'émulateur de référence est **[SugarboxV2](https://github.com/Tom1975/Sugarb
 - [VS Code](https://code.visualstudio.com/) 1.108+
 - Un émulateur CPC supportant le protocole TCP debug (voir [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md))
 - [RASM](http://www.rasm.assemble.tf/) (assembleur Z80, recommandé)
-- Node.js 18+ (pour compiler l'extension depuis les sources)
+- Node.js 18+ et npm (uniquement nécessaires pour compiler l'extension depuis les sources)
+- Python 3 (uniquement nécessaire pour empaqueter le `.vsix` via `make_vsix.py` — bibliothèque standard uniquement, aucun paquet pip requis)
 
 ---
 
@@ -27,14 +28,66 @@ L'émulateur de référence est **[SugarboxV2](https://github.com/Tom1975/Sugarb
 code --install-extension amstrad-cpc-debug-0.0.3.vsix
 ```
 
+### Installer les outils de compilation
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+winget install Python.Python.3.12
+winget install Microsoft.VisualStudioCode
+```
+
+Sous Windows, le lanceur Python est généralement `python`, pas `python3` — utilisez `python make_vsix.py` dans l'étape de compilation ci-dessous (voir [Compiler depuis les sources](#compiler-depuis-les-sources)).
+
+`RASM` n'a pas de paquet Windows — téléchargez `rasm.exe` depuis [rasm.assemble.tf](http://www.rasm.assemble.tf/) puis ajoutez son dossier au `PATH`, ou renseignez le paramètre `z80debug.rasm` / la variable d'environnement `RASM` avec son chemin.
+
+</details>
+
+<details>
+<summary><strong>Linux (Debian/Ubuntu)</strong></summary>
+
+```bash
+sudo apt update
+sudo apt install nodejs npm python3
+```
+
+La version de Node.js fournie par `apt` peut être ancienne ; si `node --version` affiche moins que 18, installez une version récente via [nvm](https://github.com/nvm-sh/nvm) :
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+nvm install --lts
+```
+
+Installez VS Code depuis le [dépôt apt/`.deb` officiel](https://code.visualstudio.com/docs/setup/linux) ou via `snap install code --classic`.
+
+`RASM` n'a pas de paquet apt — téléchargez le binaire Linux depuis [rasm.assemble.tf](http://www.rasm.assemble.tf/), rendez-le exécutable (`chmod +x`) et placez-le dans votre `PATH` (ou renseignez la variable d'environnement `RASM` / le paramètre `z80debug.rasm` avec son chemin).
+
+</details>
+
+<details>
+<summary><strong>macOS</strong></summary>
+
+```bash
+brew install node python3
+brew install --cask visual-studio-code
+```
+
+`RASM` n'a pas de formule Homebrew — téléchargez le binaire macOS depuis [rasm.assemble.tf](http://www.rasm.assemble.tf/), rendez-le exécutable (`chmod +x`) et placez-le dans votre `PATH` (ou renseignez la variable d'environnement `RASM` / le paramètre `z80debug.rasm` avec son chemin). Il peut être nécessaire de lever la quarantaine Gatekeeper : `xattr -d com.apple.quarantine rasm`.
+
+</details>
+
 ### Compiler depuis les sources
 
 ```bash
 npm install
-npm run bundle        # compile TypeScript + webpack → dist/main.js
-python3 make_vsix.py  # génère amstrad-cpc-debug-0.0.3.vsix
+npm run bundle          # compile TypeScript + webpack → dist/main.js
+python3 make_vsix.py    # génère amstrad-cpc-debug-0.0.3.vsix — utilisez "python make_vsix.py" sous Windows
 code --install-extension amstrad-cpc-debug-0.0.3.vsix
 ```
+
+Les trois commandes (`npm install`, `npm run bundle`, `make_vsix.py`) sont multiplateformes et s'exécutent de la même façon sous Windows, Linux et macOS une fois les prérequis ci-dessus installés.
 
 ---
 
