@@ -24,9 +24,12 @@ export class SymbolTable {
         return this.addressToNames.get(address) ?? [];
     }
 
-    /** Resolves a label name to its address, or undefined if not found. */
+    /** Resolves a label name to its address, or undefined if not found.
+     *  Case-insensitive: tries exact match first, then uppercase (RASM normalises to upper). */
     resolveLabel(name: string): number | undefined {
-        return this.nameToAddress.get(name);
+        return this.nameToAddress.get(name)
+            ?? this.nameToAddress.get(name.toUpperCase())
+            ?? this.nameToAddress.get(name.toLowerCase());
     }
 
     /** Returns all known label names (for completions). */

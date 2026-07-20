@@ -967,10 +967,32 @@ protected async setBreakpointsRequest(
             this.sendResponse(response);
             return;
         }
-        // Real source file — not supported
-        response.body = {
-            breakpoints: bps.map(() => ({ verified: false, message: "Source file mapping not supported" }))
-        };
+        // Real source file — resolve via nearest label in symbol table
+        const srcResults = bps.map(bp => {
+            const line = bp.line;
+            const label = this.sourceAnnotations?.nearestLabelBefore(line);
+            if (!label) {
+                return { verified: false, message: "No label found before this line — place breakpoint on or after a label" };
+            }
+            const addr = this.symbolTable?.resolveLabel(label);
+            if (addr === undefined) {
+                return { verified: false, message: `Label '${label}' not found in symbol file` };
+            }
+            return { verified: true, line: this.sourceAnnotations!.getAnnotation(label)!.lineNumber, message: `→ ${label} @ 0x${addr.toString(16).toUpperCase().padStart(4, "0")}` };
+        });
+
+        const addresses = srcResults
+            .map((r, i) => {
+                if (!r.verified) return undefined;
+                const label = this.sourceAnnotations!.nearestLabelBefore(bps[i].line)!;
+                return this.symbolTable!.resolveLabel(label)!;
+            })
+            .filter((a): a is number => a !== undefined);
+
+        this.bpRegistry.set(`source:${args.source.path}`, addresses);
+        await this.flushBreakpoints();
+
+        response.body = { breakpoints: srcResults };
         this.sendResponse(response);
         return;
     }

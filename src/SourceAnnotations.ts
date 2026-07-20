@@ -5,6 +5,14 @@ export interface LabelAnnotation {
     comment: string;
     /** Standalone comment/blank lines immediately preceding the label, trimmed */
     preamble: string[];
+    /** 1-based line number in the source file where this label is defined */
+    lineNumber: number;
+}
+
+/** One entry in the sorted label-by-line index. */
+export interface LabelLine {
+    line: number;   // 1-based
+    label: string;
 }
 
 /**
@@ -18,9 +26,27 @@ export interface LabelAnnotation {
  */
 export class SourceAnnotations {
     private byLabel: Map<string, LabelAnnotation> = new Map();
+    /** Labels sorted by ascending line number — used for nearest-label lookup. */
+    private labelsByLine: LabelLine[] = [];
 
     getAnnotation(labelName: string): LabelAnnotation | undefined {
         return this.byLabel.get(labelName);
+    }
+
+    /**
+     * Return the name of the label defined at or immediately before `line` (1-based).
+     * Returns undefined if no label precedes the line in the file.
+     */
+    nearestLabelBefore(line: number): string | undefined {
+        const arr = this.labelsByLine;
+        if (arr.length === 0) return undefined;
+        let lo = 0, hi = arr.length - 1, result: string | undefined;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (arr[mid].line <= line) { result = arr[mid].label; lo = mid + 1; }
+            else                       { hi = mid - 1; }
+        }
+        return result;
     }
 
     static fromFile(filePath: string): SourceAnnotations {
@@ -36,7 +62,9 @@ export class SourceAnnotations {
         const lines = content.split(/\r?\n/);
         let preamble: string[] = [];
 
-        for (const line of lines) {
+        for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+            const line = lines[lineIdx];
+            const lineNo = lineIdx + 1; // 1-based
             const trimmed = line.trim();
 
             // Standalone comment or blank line — accumulate as potential preamble
@@ -63,7 +91,9 @@ export class SourceAnnotations {
                 ann.byLabel.set(labelName, {
                     comment: inlineComment,
                     preamble: trimPreamble(preamble),
+                    lineNumber: lineNo,
                 });
+                ann.labelsByLine.push({ line: lineNo, label: labelName });
 
                 // Reset preamble after consuming it
                 preamble = [];
