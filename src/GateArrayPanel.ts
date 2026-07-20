@@ -138,6 +138,65 @@ ${HardwarePanel.commonCss()}
   .dot-on  { background: var(--vscode-testing-iconPassed, #73c991); }
   .dot-off { background: var(--fg-dim); }
   .dot-warn { background: var(--vscode-testing-iconFailed, #f48771); }
+  /* Memory map */
+  .memmap {
+    display: grid;
+    grid-template-columns: 5.5em 1fr 1fr;
+    gap: 0;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    font-size: 0.82em;
+  }
+  .memmap-hdr {
+    background: var(--bg-section);
+    color: var(--fg-dim);
+    padding: 3px 6px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+  .memmap-addr {
+    font-family: var(--font);
+    padding: 5px 6px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    color: var(--fg-dim);
+    white-space: nowrap;
+    background: var(--bg-section);
+  }
+  .memmap-cell {
+    padding: 5px 6px;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .memmap-cell:last-child { border-right: none; }
+  .memmap-addr:last-of-type,
+  .memmap-cell.last-row { border-bottom: none; }
+  .mem-badge {
+    display: inline-block;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-weight: 600;
+    font-size: 0.82em;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .mem-rom   { background: #7c4f00; color: #ffd080; }
+  .mem-ram   { background: #00497a; color: #7dd4fa; }
+  .mem-cart  { background: #1a5c2a; color: #89d9a0; }
+  .mem-ext   { background: #4a2080; color: #c8a0fa; }
+  .mem-unk   { background: var(--bg-section); color: var(--fg-dim); }
+  @media (prefers-color-scheme: light) {
+    .mem-rom  { background: #ffe5b0; color: #7c3a00; }
+    .mem-ram  { background: #b8dff7; color: #00457a; }
+    .mem-cart { background: #b8f0cc; color: #1a5c2a; }
+    .mem-ext  { background: #e0d0ff; color: #4a2080; }
+  }
 </style>
 </head>
 <body>
@@ -160,6 +219,13 @@ ${HardwarePanel.commonCss()}
 
 <div class="section-title">Flags</div>
 <div id="flagsRow" class="flags-row"></div>
+
+<div class="section-title">Memory Map</div>
+<div id="memMap" class="memmap">
+  <div class="memmap-hdr">Address</div>
+  <div class="memmap-hdr">Read</div>
+  <div class="memmap-hdr">Write</div>
+</div>
 
 <script>
 const vscode = acquireVsCodeApi();
@@ -255,11 +321,60 @@ function renderFlags(state) {
         flag('ASIC Locked', state.asicLocked ?? false, false);
 }
 
+function memLabel(type, index) {
+    switch (type) {
+        case 'lower_rom': return { cls: 'mem-rom',  text: 'Lower ROM (OS)' };
+        case 'upper_rom': return { cls: 'mem-rom',  text: 'Upper ROM #' + index };
+        case 'ram':       return { cls: 'mem-ram',  text: 'RAM bank '   + index };
+        case 'ext_ram':   return { cls: 'mem-ext',  text: 'Ext RAM #'   + index };
+        case 'cart':      return { cls: 'mem-cart', text: 'Cart slot '  + index };
+        default:          return { cls: 'mem-unk',  text: '?' };
+    }
+}
+
+function renderMemMap(state) {
+    const wins = state.memWindows;
+    if (!wins || wins.length === 0) return;
+
+    const container = document.getElementById('memMap');
+    // Remove all rows except the header (first 3 divs)
+    while (container.children.length > 3) container.removeChild(container.lastChild);
+
+    // Display from high to low address (C000 first)
+    for (let w = 3; w >= 0; w--) {
+        const win  = wins[w];
+        const base = win.base;
+        const top  = base + 0x3FFF;
+        const isLast = (w === 0);
+
+        const addrEl = document.createElement('div');
+        addrEl.className = 'memmap-addr' + (isLast ? ' last-row' : '');
+        addrEl.textContent = \`\${hex4(base)}–\${hex4(top)}\`;
+
+        const rd = memLabel(win.readType, win.readIndex);
+        const rdEl = document.createElement('div');
+        rdEl.className = 'memmap-cell' + (isLast ? ' last-row' : '');
+        rdEl.innerHTML = \`<span class="mem-badge \${rd.cls}">\${rd.text}</span>\`;
+
+        const wr = memLabel(win.writeType, win.writeIndex);
+        const wrEl = document.createElement('div');
+        wrEl.className = 'memmap-cell' + (isLast ? ' last-row' : '');
+        wrEl.innerHTML = \`<span class="mem-badge \${wr.text !== '?' ? 'mem-ram' : 'mem-unk'}">\${wr.text}</span>\`;
+
+        container.appendChild(addrEl);
+        container.appendChild(rdEl);
+        container.appendChild(wrEl);
+    }
+}
+
+function hex4(n) { return '0x' + n.toString(16).toUpperCase().padStart(4, '0'); }
+
 function applyState(state) {
     document.getElementById('errorMsg').style.display = 'none';
     renderPalette(state);
     renderBorder(state);
     renderFlags(state);
+    renderMemMap(state);
 }
 
 document.getElementById('btnRefresh').addEventListener('click', () => {
