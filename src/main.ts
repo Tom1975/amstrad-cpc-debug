@@ -61,6 +61,8 @@ class Z80DisasmProvider implements vscode.TextDocumentContentProvider {
 let bpDecoration: vscode.TextEditorDecorationType;
 let pcDecoration: vscode.TextEditorDecorationType;
 
+let z80Out: vscode.OutputChannel;
+
 const bpAddresses = new Set<number>();
 const BP_DIRECT_KEY = "z80bp.direct";
 let currentPcAddress: number | undefined;
@@ -104,6 +106,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Must be first — all t() calls depend on it
     initI18n(context.extensionPath);
 
+    z80Out = vscode.window.createOutputChannel("Z80 Debug");
+    context.subscriptions.push(z80Out);
+
     bpDecoration = vscode.window.createTextEditorDecorationType({
         gutterIconPath: vscode.Uri.joinPath(context.extensionUri, "images", "breakpoint.svg"),
         gutterIconSize: "contain"
@@ -144,6 +149,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.debug.registerDebugAdapterTrackerFactory("z80", {
             createDebugAdapterTracker(session: vscode.DebugSession) {
                 currentZ80Session = session;
+                let firstStop = true;
                 return {
                     onWillStopSession() { currentZ80Session = undefined; },
                     onDidSendMessage(message: any) {
@@ -197,6 +203,17 @@ export function activate(context: vscode.ExtensionContext) {
                             message.type === "event" &&
                             message.event === "stopped"
                         ) {
+                            // On first stop of a new session, refresh all open z80disasm
+                            // documents so VS Code doesn't show stale disassembly from
+                            // the previous session's content-provider cache.
+                            if (firstStop) {
+                                firstStop = false;
+                                for (const doc of vscode.workspace.textDocuments) {
+                                    if (doc.uri.scheme === "z80disasm") {
+                                        disasmProvider.refresh(doc.uri);
+                                    }
+                                }
+                            }
                             HardwarePanel.refreshAll().catch(() => {});
                         } else if (
                             message.type === "event" &&
@@ -418,29 +435,47 @@ export function activate(context: vscode.ExtensionContext) {
                 folder: vscode.WorkspaceFolder | undefined,
                 config: vscode.DebugConfiguration
             ): vscode.DebugConfiguration {
-                if (!folder) return config;
-                const raw = CpcConfig.read(folder.uri.fsPath);
-                if (!raw) return config;
-                const buildName = vscode.workspace.getConfiguration("z80debug")
-                    .get<string>("buildName", "main");
-                const resolved = CpcConfig.resolve(raw, buildName, folder.uri.fsPath);
-                // Only fill fields not already set by launch.json / quickLaunch
-                if (!config.configuration && resolved.configuration)
-                    config.configuration = resolved.configuration;
-                if (!config.disk        && resolved.launch?.disk)
-                    config.disk        = resolved.launch.disk;
-                if (!config.diskB       && resolved.launch?.diskB)
-                    config.diskB       = resolved.launch.diskB;
-                if (!config.tape        && resolved.launch?.tape)
-                    config.tape        = resolved.launch.tape;
-                if (!config.snapshot    && resolved.launch?.snapshot)
-                    config.snapshot    = resolved.launch.snapshot;
-                if (!config.cartridge   && resolved.launch?.cartridge)
-                    config.cartridge   = resolved.launch.cartridge;
-                if (!config.symbolFile  && resolved.launch?.symbolFile)
-                    config.symbolFile  = resolved.launch.symbolFile;
-                if (!config.port        && resolved.launch?.port)
-                    config.port        = resolved.launch.port;
+                // Reconstruct the RASM command from workspace settings so the
+                // debug adapter can log it alongside the Sugarbox command line.
+                if (folder) {
+                    const z80cfg     = vscode.workspace.getConfiguration("z80debug");
+                    const buildName  = z80cfg.get<string>("buildName", "main");
+                    const entryPoint = z80cfg.get<string>("entryPoint", "src/main.asm");
+                    const rasmBin    = z80cfg.get<string>("rasm", "rasm");
+                    const wsPath     = folder.uri.fsPath;
+                    const rasmOut    = nodePath.join(wsPath, "build", buildName);
+
+                    // Detect cartridge mode from cpc.json (if present) or existing config
+                    const raw      = CpcConfig.read(wsPath);
+                    const resolved = raw ? CpcConfig.resolve(raw, buildName, wsPath) : null;
+                    const isCart   = (resolved?.launch?.type === "cartridge")
+                                  || !!config.cartridge;
+                    const rasmArgs = isCart
+                        ? [nodePath.join(wsPath, entryPoint), "-o", rasmOut, "-rasm", "-sq"]
+                        : [nodePath.join(wsPath, entryPoint), "-o", rasmOut, "-oi", rasmOut + ".sna", "-rasm", "-sq"];
+                    config._rasmCmd = `${rasmBin} ${rasmArgs.join(" ")}`;
+
+                    if (resolved) {
+                        // Only fill fields not already set by launch.json / quickLaunch
+                        if (!config.configuration && resolved.configuration)
+                            config.configuration = resolved.configuration;
+                        if (!config.disk        && resolved.launch?.disk)
+                            config.disk        = resolved.launch.disk;
+                        if (!config.diskB       && resolved.launch?.diskB)
+                            config.diskB       = resolved.launch.diskB;
+                        if (!config.tape        && resolved.launch?.tape)
+                            config.tape        = resolved.launch.tape;
+                        if (!config.snapshot    && resolved.launch?.snapshot)
+                            config.snapshot    = resolved.launch.snapshot;
+                        if (!config.cartridge   && resolved.launch?.cartridge)
+                            config.cartridge   = resolved.launch.cartridge;
+                        if (!config.symbolFile  && resolved.launch?.symbolFile)
+                            config.symbolFile  = resolved.launch.symbolFile;
+                        if (!config.port        && resolved.launch?.port)
+                            config.port        = resolved.launch.port;
+                    }
+                    logLaunchCfg(config, folder);
+                }
                 return config;
             }
         })
@@ -857,6 +892,7 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
             if (projectSymbols) launchCfg.symbolFile = projectSymbols;
             if (lastLaunch.media === "projectCartridgeBuild") launchCfg.preLaunchTask = "RASM: assemble";
         }
+        logLaunchCfg(launchCfg, folder);
         await vscode.debug.startDebugging(folder, launchCfg);
         return;
     }
@@ -979,7 +1015,43 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
         label:         lastLabel,
     } satisfies LastLaunch);
 
+    logLaunchCfg(launchCfg, folder);
     await vscode.debug.startDebugging(folder, launchCfg);
+}
+
+function logLaunchCfg(cfg: vscode.DebugConfiguration, folder: vscode.WorkspaceFolder | undefined): void {
+    const z80cfg     = vscode.workspace.getConfiguration("z80debug");
+    const buildName  = z80cfg.get<string>("buildName", "main");
+    const entryPoint = z80cfg.get<string>("entryPoint", "src/main.asm");
+    const rasmBin    = z80cfg.get<string>("rasm", "rasm");
+    const wsPath     = folder?.uri.fsPath ?? "";
+
+    const rasmOut  = wsPath ? nodePath.join(wsPath, "build", buildName) : `build/${buildName}`;
+    const isCart   = !!cfg.cartridge;
+    const rasmArgs = isCart
+        ? [wsPath ? nodePath.join(wsPath, entryPoint) : entryPoint, "-o", rasmOut, "-rasm", "-sq"]
+        : [wsPath ? nodePath.join(wsPath, entryPoint) : entryPoint, "-o", rasmOut, "-oi", rasmOut + ".sna", "-rasm", "-sq"];
+
+    const sep = "─".repeat(60);
+    z80Out.appendLine(sep);
+    z80Out.appendLine(`RASM     : ${rasmBin} ${rasmArgs.join(" ")}`);
+    if (cfg.cartridge)    z80Out.appendLine(`cartridge: ${cfg.cartridge}`);
+    if (cfg.disk)         z80Out.appendLine(`disk A   : ${cfg.disk}`);
+    if (cfg.diskB)        z80Out.appendLine(`disk B   : ${cfg.diskB}`);
+    if (cfg.tape)         z80Out.appendLine(`tape     : ${cfg.tape}`);
+    if (cfg.snapshot)     z80Out.appendLine(`snapshot : ${cfg.snapshot}`);
+    if (cfg.symbolFile)   z80Out.appendLine(`symbols  : ${cfg.symbolFile}`);
+    // cfg.emulator may still contain "${config:z80debug.sugarbox}" at resolveDebugConfiguration
+    // time (VS Code substitutes variables later). Resolve it ourselves from workspace settings.
+    const sugarboxPath = vscode.workspace.getConfiguration("z80debug").get<string>("sugarbox", "")
+                      || cfg.emulator || "?";
+    const spawnArgs = ["--debug", "--debug_server", String(cfg.port ?? 1234)];
+    if (cfg.cartridge)     spawnArgs.push("--cart", cfg.cartridge);
+    if (cfg.configuration) spawnArgs.push("--cfg",  cfg.configuration);
+    if (cfg.hideEmulator)  spawnArgs.push("--hide");
+    z80Out.appendLine(`Sugarbox : ${sugarboxPath} ${spawnArgs.join(" ")}`);
+    z80Out.appendLine(sep);
+    z80Out.show();
 }
 
 // ─── Startup check ────────────────────────────────────────────────────────────

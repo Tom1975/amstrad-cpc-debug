@@ -231,7 +231,8 @@ protected async launchRequest(
     // data files (Sugarbox.ini, ROM/, CONF/) relative to itself, regardless
     // of the VS Code workspace folder.
     const emulatorDir = nodePath.dirname(args.emulator);
-    console.log("DAP: Spawning emulator:", args.emulator, spawnArgs.join(" "), "(cwd:", emulatorDir, ")");
+    const fullCmd = `${args.emulator} ${spawnArgs.join(" ")}`;
+    console.log("DAP: Spawning emulator:", fullCmd, "(cwd:", emulatorDir, ")");
 
     // Track early exit so we can give a more actionable error message.
     let emulatorExitCode: number | null = null;
