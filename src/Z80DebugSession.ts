@@ -495,8 +495,7 @@ protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProto
     console.log("DAP: scopesRequest");
     response.body = {
         scopes: [
-            // Variables as register, memory. Maybe memory banks ? tape/disks ? cartridge ?
-            new Scope("Registers", 1, false),
+            Object.assign(new Scope("Registers", 1, false), { presentationHint: "registers" }),
             new Scope("Memory", 2, false),
             new Scope("Stack", 3, false)
         ]
@@ -525,7 +524,8 @@ protected async variablesRequest(
                 const v: DebugProtocol.Variable = {
                     name,
                     value: hex,
-                    variablesReference: 0
+                    variablesReference: 0,
+                    evaluateName: name
                 };
                 if (is16) {
                     (v as any).memoryReference = hex;
@@ -557,18 +557,19 @@ protected async variablesRequest(
         const BYTES = WORDS * 2;
 
         // 2) Lire la mémoire
-        const mem = await this.emulator.send({
+        const reply = await this.emulator.send({
             cmd: "readMemory",
             address: sp,
             size: BYTES
-        }) as number[]; // tableau de bytes
+        });
+        const mem: number[] = reply?.bytes ?? [];
 
         // 3) Construire les variables
         const vars = [];
 
         for (let i = 0; i < WORDS; i++) {
-            const lo = mem[i * 2];
-            const hi = mem[i * 2 + 1];
+            const lo = mem[i * 2] ?? 0;
+            const hi = mem[i * 2 + 1] ?? 0;
             const value = lo | (hi << 8);
             const addr = sp + i * 2;
 
@@ -1220,12 +1221,15 @@ protected async setVariableRequest(
     }
 
     const val = Number(args.value);  // handles "0x1234" and decimal
-    const key = args.name.toLowerCase();  // AF→af, AF'→af', etc.
+    const key = args.name.toLowerCase();  // AF→af, AF'→af', I→i, etc.
 
     await this.emulator.send({ cmd: "setRegisters", [key]: val });
 
+    const is8 = REG8.has(key);
     response.body = {
-        value: "0x" + (val & 0xFFFF).toString(16).padStart(4, "0"),
+        value: is8
+            ? "0x" + (val & 0xFF).toString(16).padStart(2, "0").toUpperCase()
+            : "0x" + (val & 0xFFFF).toString(16).padStart(4, "0").toUpperCase(),
         variablesReference: 0
     };
     this.sendResponse(response);
