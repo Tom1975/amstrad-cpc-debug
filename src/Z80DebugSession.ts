@@ -178,6 +178,19 @@ protected async launchRequest(
     this.loadSymbols(args);
     const port = args.port ?? 1234;
 
+    // ── Launch trace ──────────────────────────────────────────────────────────
+    {
+        const fields: Record<string, any> = { emulator: args.emulator, port };
+        if (args.disk)          fields.disk        = args.disk;
+        if (args.diskB)         fields.diskB       = args.diskB;
+        if (args.tape)          fields.tape        = args.tape;
+        if (args.snapshot)      fields.snapshot    = args.snapshot;
+        if (args.cartridge)     fields.cartridge   = args.cartridge;
+        if (args.configuration) fields.configuration = args.configuration;
+        const lines = Object.entries(fields).map(([k, v]) => `  ${k}: ${v}`).join("\n");
+        this.sendEvent(new OutputEvent(`[Z80 Debug] Launch args:\n${lines}\n`, "console"));
+    }
+
     // ── Pre-flight: validate emulator path ────────────────────────────────────
     if (!args.emulator) {
         const msg = "Emulator path not set — configure 'emulator' in launch.json or run Z80 Debug: Configure workspace.\n";
@@ -196,16 +209,19 @@ protected async launchRequest(
         return;
     }
 
-    // Build a temporary CSL script for disk/tape (snapshot is loaded via DAP command after connect)
+    // Disks are inserted via DAP command after connect (better error reporting).
+    // Tape still uses CSL (no DAP command for tape insertion).
     let cslFile: string | null = null;
-    if (args.disk || args.diskB || args.tape) {
-        const lines = ["cslversion 2.0"];
-        if (args.disk)  lines.push(`disk_insert 0 '${args.disk}'`);
-        if (args.diskB) lines.push(`disk_insert 1 '${args.diskB}'`);
-        if (args.tape)  lines.push(`tape_insert '${args.tape}'`);
+    if (args.tape) {
+        const lines = ["csl_version 2.0", `tape_insert '${args.tape}'`];
         cslFile = nodePath.join(os.tmpdir(), `sugarbox_${Date.now()}.csl`);
-        fs.writeFileSync(cslFile, lines.join("\n") + "\n");
+        const cslContent = lines.join("\n") + "\n";
+        fs.writeFileSync(cslFile, cslContent);
         console.log("DAP: CSL script written to", cslFile);
+        this.sendEvent(new OutputEvent(
+            `[Z80 Debug] CSL (tape) → ${cslFile}\n${cslContent.split("\n").filter(Boolean).map(l => "  " + l).join("\n")}\n`,
+            "console"
+        ));
     }
 
     // Build Sugarbox arguments
@@ -233,6 +249,10 @@ protected async launchRequest(
     const emulatorDir = nodePath.dirname(args.emulator);
     const fullCmd = `${args.emulator} ${spawnArgs.join(" ")}`;
     console.log("DAP: Spawning emulator:", fullCmd, "(cwd:", emulatorDir, ")");
+    this.sendEvent(new OutputEvent(
+        `[Z80 Debug] Spawning: ${fullCmd}\n  cwd: ${emulatorDir}\n`,
+        "console"
+    ));
 
     // Track early exit so we can give a more actionable error message.
     let emulatorExitCode: number | null = null;
@@ -316,11 +336,34 @@ protected async launchRequest(
         return;
     }
     console.log("DAP: Connected to emulator");
+    this.sendEvent(new OutputEvent(`[Z80 Debug] Connected to emulator on port ${port}\n`, "console"));
+
+    // Insert disks via DAP — gives explicit error reporting unlike the CSL approach.
+    for (const [drive, path] of [[0, args.disk], [1, args.diskB]] as [number, string | undefined][]) {
+        if (!path) continue;
+        this.sendEvent(new OutputEvent(`[Z80 Debug] Inserting disk ${drive}: ${path}\n`, "console"));
+        if (!fs.existsSync(path)) {
+            this.sendEvent(new OutputEvent(`[Z80 Debug] WARNING: disk file not found: ${path}\n`, "stderr"));
+        } else {
+            try {
+                const r = await this.emulator.send({ cmd: "insertDisk", drive, path });
+                if (r?.status === "ok") {
+                    this.sendEvent(new OutputEvent(`[Z80 Debug] Disk ${drive} inserted OK\n`, "console"));
+                } else {
+                    this.sendEvent(new OutputEvent(
+                        `[Z80 Debug] WARNING: insertDisk drive ${drive} failed: ${JSON.stringify(r)}\n`, "stderr"));
+                }
+            } catch (e: any) {
+                this.sendEvent(new OutputEvent(`[Z80 Debug] insertDisk timed out: ${e.message}\n`, "stderr"));
+            }
+        }
+    }
 
     // Load snapshot via path — the emulator runs on the same machine so it can
     // read the file directly. Sending base64 exceeds the C++ TCP buffer (4096 bytes).
     if (args.snapshot) {
         console.log("DAP: Loading snapshot", args.snapshot);
+        this.sendEvent(new OutputEvent(`[Z80 Debug] Loading snapshot: ${args.snapshot}\n`, "console"));
         if (!fs.existsSync(args.snapshot)) {
             const msg = `Cannot read snapshot file "${args.snapshot}": file not found\n`;
             this.sendEvent(new OutputEvent(msg, "stderr"));

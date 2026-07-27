@@ -78,6 +78,18 @@ export class CpcConfig {
         };
     }
 
+    static defaultSnapshot(buildName: string): CpcProjectConfig {
+        return {
+            configuration: "CPC6128FR",
+            launch: {
+                type:       "snapshot",
+                snapshot:   `build/\${buildName}.sna`,
+                symbolFile: `build/\${buildName}.rasm`,
+                port:       1234,
+            },
+        };
+    }
+
     static defaultCartridge(buildName: string): CpcProjectConfig {
         return {
             configuration: "CPC6128PLUSEN",

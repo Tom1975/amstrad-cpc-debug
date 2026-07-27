@@ -450,9 +450,13 @@ export function activate(context: vscode.ExtensionContext) {
                     const resolved = raw ? CpcConfig.resolve(raw, buildName, wsPath) : null;
                     const isCart   = (resolved?.launch?.type === "cartridge")
                                   || !!config.cartridge;
+                    const isSna    = resolved?.launch?.type === "snapshot"
+                                  || (!!config.snapshot && !config.disk && !config.diskB && !config.tape);
                     const rasmArgs = isCart
                         ? [nodePath.join(wsPath, entryPoint), "-o", rasmOut, "-rasm", "-sq"]
-                        : [nodePath.join(wsPath, entryPoint), "-o", rasmOut, "-oi", rasmOut + ".sna", "-rasm", "-sq"];
+                        : isSna
+                        ? [nodePath.join(wsPath, entryPoint), "-o", rasmOut, "-oi", rasmOut + ".sna", "-rasm", "-sq"]
+                        : [nodePath.join(wsPath, entryPoint), "-o", rasmOut, "-eo", "-rasm", "-sq"];
                     config._rasmCmd = `${rasmBin} ${rasmArgs.join(" ")}`;
 
                     if (resolved) {
@@ -558,20 +562,24 @@ async function newProject(): Promise<void> {
     const sugarboxPath = globalCfg.get<string>("sugarbox") || "";
     const rasmPath     = globalCfg.get<string>("rasm")     || "rasm";
 
-    const isCartridge = templateChoice.id === "cartridge";
+    const tid = templateChoice.id as "hello" | "empty" | "cartridge";
 
     const asmSource =
-        templateChoice.id === "hello"      ? templateHello(projectName) :
-        templateChoice.id === "cartridge"  ? templateCartridge(projectName) :
-                                             templateEmpty(projectName);
+        tid === "hello"      ? templateHello(projectName) :
+        tid === "cartridge"  ? templateCartridge(projectName) :
+                               templateEmpty(projectName);
     fs.writeFileSync(nodePath.join(srcDir, "main.asm"), asmSource);
 
-    fs.writeFileSync(nodePath.join(vscodeDir, "tasks.json"),    tasksJson(isCartridge));
+    const taskType = tid === "cartridge" ? "cartridge" : tid === "empty" ? "snapshot" : "disk";
+    fs.writeFileSync(nodePath.join(vscodeDir, "tasks.json"),    tasksJson(taskType));
     fs.writeFileSync(nodePath.join(vscodeDir, "launch.json"),   launchJson());
     fs.writeFileSync(nodePath.join(vscodeDir, "settings.json"), settingsJson(projectName, sugarboxPath, rasmPath));
     fs.writeFileSync(nodePath.join(projectDir, ".gitignore"),   "build/\n");
-    CpcConfig.write(projectDir,
-        isCartridge ? CpcConfig.defaultCartridge(projectName) : CpcConfig.default(projectName));
+    const cpcCfg =
+        tid === "cartridge" ? CpcConfig.defaultCartridge(projectName) :
+        tid === "empty"     ? CpcConfig.defaultSnapshot(projectName) :
+                              CpcConfig.default(projectName);
+    CpcConfig.write(projectDir, cpcCfg);
 
     const newUri = vscode.Uri.file(projectDir);
     const choice = await vscode.window.showInformationMessage(
@@ -592,12 +600,10 @@ function templateHello(name: string): string {
     return `\
 ; ── ${name} ${"─".repeat(Math.max(0, 78 - name.length))}
 ; Built with RASM — press F5 to build and debug.
-; From CPC Basic: CALL &8000
+; From CPC Basic: RUN"PROG.BIN  or  CALL &8000
 ; ${"─".repeat(78)}
 
-        BANKSET 0
         ORG     #8000
-        RUN     start
 
 ; ── Entry point ${"─".repeat(63)}
 start:
@@ -624,6 +630,10 @@ TXT_OUTPUT      EQU     #BB5A
 ; ── Data ${"─".repeat(70)}
 msg_hello:
         db      "Hello, World!", 13, 0
+end_prog:
+
+; ── Save binary to DSK ${"─".repeat(56)}
+        SAVE 'PROG.BIN',start,end_prog-start,DSK,'build/${name}.dsk',A
 `;
 }
 
@@ -631,7 +641,7 @@ function templateEmpty(name: string): string {
     return `\
 ; ── ${name} ${"─".repeat(Math.max(0, 78 - name.length))}
 ; Built with RASM — press F5 to build and debug.
-; From CPC Basic: CALL &8000
+; Snapshot (.sna) — CALL &8000 depuis BASIC ou F5 directement.
 ; ${"─".repeat(78)}
 
         BANKSET 0
@@ -640,10 +650,10 @@ function templateEmpty(name: string): string {
 
 ; ── Entry point ${"─".repeat(63)}
 start:
-        ; Your code here
+        ; Votre code ici
 
 
-        ; Infinite loop
+        ; Boucle infinie
 loop:
         jr      loop
 `;
@@ -676,18 +686,27 @@ loop:
 `;
 }
 
-function tasksJson(cartridge = false): string {
-    const assembleArgs = cartridge
+function tasksJson(type: "disk" | "snapshot" | "cartridge" = "disk"): string {
+    const assembleArgs =
+        type === "cartridge"
         ? [
             "${workspaceFolder}/${config:z80debug.entryPoint}",
             "-o",    "${workspaceFolder}/build/${config:z80debug.buildName}",
             "-rasm",
             "-sq"
           ]
-        : [
+        : type === "snapshot"
+        ? [
             "${workspaceFolder}/${config:z80debug.entryPoint}",
             "-o",   "${workspaceFolder}/build/${config:z80debug.buildName}",
             "-oi",  "${workspaceFolder}/build/${config:z80debug.buildName}.sna",
+            "-rasm",
+            "-sq"
+          ]
+        : /* disk */ [
+            "${workspaceFolder}/${config:z80debug.entryPoint}",
+            "-o",   "${workspaceFolder}/build/${config:z80debug.buildName}",
+            "-eo",
             "-rasm",
             "-sq"
           ];
@@ -1028,24 +1047,42 @@ function logLaunchCfg(cfg: vscode.DebugConfiguration, folder: vscode.WorkspaceFo
 
     const rasmOut  = wsPath ? nodePath.join(wsPath, "build", buildName) : `build/${buildName}`;
     const isCart   = !!cfg.cartridge;
+    const isSna    = !!cfg.snapshot && !cfg.disk && !cfg.diskB && !cfg.tape;
     const rasmArgs = isCart
         ? [wsPath ? nodePath.join(wsPath, entryPoint) : entryPoint, "-o", rasmOut, "-rasm", "-sq"]
-        : [wsPath ? nodePath.join(wsPath, entryPoint) : entryPoint, "-o", rasmOut, "-oi", rasmOut + ".sna", "-rasm", "-sq"];
+        : isSna
+        ? [wsPath ? nodePath.join(wsPath, entryPoint) : entryPoint, "-o", rasmOut, "-oi", rasmOut + ".sna", "-rasm", "-sq"]
+        : [wsPath ? nodePath.join(wsPath, entryPoint) : entryPoint, "-o", rasmOut, "-eo", "-rasm", "-sq"];
+
+    const fileOk  = (p: string | undefined) => p ? (fs.existsSync(p) ? "✓" : "✗ NOT FOUND") : "";
+    const fileLine = (label: string, p: string | undefined) =>
+        p ? `${label}: ${p}  ${fileOk(p)}` : "";
 
     const sep = "─".repeat(60);
     z80Out.appendLine(sep);
     z80Out.appendLine(`RASM     : ${rasmBin} ${rasmArgs.join(" ")}`);
-    if (cfg.cartridge)    z80Out.appendLine(`cartridge: ${cfg.cartridge}`);
-    if (cfg.disk)         z80Out.appendLine(`disk A   : ${cfg.disk}`);
-    if (cfg.diskB)        z80Out.appendLine(`disk B   : ${cfg.diskB}`);
-    if (cfg.tape)         z80Out.appendLine(`tape     : ${cfg.tape}`);
-    if (cfg.snapshot)     z80Out.appendLine(`snapshot : ${cfg.snapshot}`);
-    if (cfg.symbolFile)   z80Out.appendLine(`symbols  : ${cfg.symbolFile}`);
+    if (cfg.cartridge) z80Out.appendLine(fileLine("cartridge", cfg.cartridge));
+    if (cfg.disk)      z80Out.appendLine(fileLine("disk A   ", cfg.disk));
+    if (cfg.diskB)     z80Out.appendLine(fileLine("disk B   ", cfg.diskB));
+    if (cfg.tape)      z80Out.appendLine(fileLine("tape     ", cfg.tape));
+    if (cfg.snapshot)  z80Out.appendLine(fileLine("snapshot ", cfg.snapshot));
+    if (cfg.symbolFile) z80Out.appendLine(fileLine("symbols  ", cfg.symbolFile));
+
+    // CSL script that will be generated for disk/tape
+    if (cfg.disk || cfg.diskB || cfg.tape) {
+        const cslLines: string[] = ["  cslversion 2.0"];
+        if (cfg.disk)  cslLines.push(`  disk_insert 0 '${cfg.disk}'`);
+        if (cfg.diskB) cslLines.push(`  disk_insert 1 '${cfg.diskB}'`);
+        if (cfg.tape)  cslLines.push(`  tape_insert '${cfg.tape}'`);
+        z80Out.appendLine(`CSL      :\n${cslLines.join("\n")}`);
+    }
+
     // cfg.emulator may still contain "${config:z80debug.sugarbox}" at resolveDebugConfiguration
     // time (VS Code substitutes variables later). Resolve it ourselves from workspace settings.
     const sugarboxPath = vscode.workspace.getConfiguration("z80debug").get<string>("sugarbox", "")
                       || cfg.emulator || "?";
     const spawnArgs = ["--debug", "--debug_server", String(cfg.port ?? 1234)];
+    if (cfg.disk || cfg.diskB || cfg.tape) spawnArgs.push("--csl", "<tmp>.csl");
     if (cfg.cartridge)     spawnArgs.push("--cart", cfg.cartridge);
     if (cfg.configuration) spawnArgs.push("--cfg",  cfg.configuration);
     if (cfg.hideEmulator)  spawnArgs.push("--hide");
