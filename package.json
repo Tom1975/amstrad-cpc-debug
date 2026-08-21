@@ -4,6 +4,7 @@
   "description": "VS Code debugger for Amstrad CPC Z80 development — connects to any emulator implementing the amstrad-cpc-debug TCP protocol",
   "version": "0.0.3",
   "publisher": "thomas-guillemin",
+  "extensionKind": ["workspace"],
   "engines": {
     "vscode": "^1.108.0"
   },
@@ -81,6 +82,11 @@
       }
     ],
     "grammars": [
+      {
+        "language": "asm",
+        "scopeName": "source.asm.z80",
+        "path": "./syntaxes/asm.tmGrammar.json"
+      },
       {
         "language": "z80-disasm",
         "scopeName": "source.z80disasm",

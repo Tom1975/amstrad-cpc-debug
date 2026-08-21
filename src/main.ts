@@ -443,6 +443,22 @@ export function activate(context: vscode.ExtensionContext) {
                     const entryPoint = z80cfg.get<string>("entryPoint", "src/main.asm");
                     const rasmBin    = z80cfg.get<string>("rasm", "rasm");
                     const wsPath     = folder.uri.fsPath;
+
+                    // VS Code resolves ${workspaceFolder} AFTER resolveDebugConfiguration
+                    // returns, but in Remote-WSL the resolution may fail (URI mismatch).
+                    // Substitute the variables ourselves here while we have the correct path.
+                    const sub = (s: string | undefined): string | undefined => s
+                        ? s.replace(/\$\{workspaceFolder\}/g, wsPath)
+                           .replace(/\$\{config:z80debug\.buildName\}/g, buildName)
+                           .replace(/\$\{config:z80debug\.entryPoint\}/g, entryPoint)
+                        : s;
+                    if (config.cartridge)  config.cartridge  = sub(config.cartridge);
+                    if (config.disk)       config.disk       = sub(config.disk);
+                    if (config.diskB)      config.diskB      = sub(config.diskB);
+                    if (config.tape)       config.tape       = sub(config.tape);
+                    if (config.snapshot)   config.snapshot   = sub(config.snapshot);
+                    if (config.symbolFile) config.symbolFile = sub(config.symbolFile);
+                    if (config.sourceFile) config.sourceFile = sub(config.sourceFile);
                     const rasmOut    = nodePath.join(wsPath, "build", buildName);
 
                     // Detect cartridge mode from cpc.json (if present) or existing config
@@ -794,15 +810,28 @@ async function quickLaunch(context: vscode.ExtensionContext): Promise<void> {
     let emulatorPath = cfg.get<string>("sugarbox") || "";
 
     if (!emulatorPath || !fs.existsSync(emulatorPath)) {
-        const picked = await vscode.window.showOpenDialog({
-            title: t("ql.emulatorPicker.title"),
-            canSelectMany: false,
-            filters: process.platform === "win32"
-                ? { [t("ql.emulatorPicker.exe")]: ["exe"] }
-                : { [t("ql.emulatorPicker.all")]: ["*"] }
-        });
-        if (!picked) return;
-        emulatorPath = picked[0].fsPath;
+        if (vscode.env.remoteName) {
+            const entered = await vscode.window.showInputBox({
+                title: t("ql.emulatorPicker.title"),
+                prompt: "Chemin absolu vers l'exécutable Sugarbox",
+                value: emulatorPath,
+                ignoreFocusOut: true
+            });
+            if (!entered) return;
+            emulatorPath = entered;
+        } else {
+            const picked = await vscode.window.showOpenDialog({
+                title: t("ql.emulatorPicker.title"),
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                filters: process.platform === "win32"
+                    ? { [t("ql.emulatorPicker.exe")]: ["exe"] }
+                    : { [t("ql.emulatorPicker.all")]: ["*"] }
+            });
+            if (!picked) return;
+            emulatorPath = picked[0].fsPath;
+        }
     }
 
     const folder    = vscode.workspace.workspaceFolders?.[0];
@@ -1097,7 +1126,10 @@ function checkConfiguration(): void {
     const config   = vscode.workspace.getConfiguration("z80debug");
     const sugarbox = config.get<string>("sugarbox", "");
 
-    if (!sugarbox || !fs.existsSync(sugarbox)) {
+    // On Windows with extensionKind:ui, Linux paths (/home/...) are unreachable locally —
+    // skip the check; the real validation happens remote-side at launch time.
+    const isLinuxPathOnWindows = process.platform === "win32" && sugarbox.startsWith("/");
+    if (!isLinuxPathOnWindows && (!sugarbox || !fs.existsSync(sugarbox))) {
         vscode.window.showWarningMessage(
             t("cfg.warnNotConfigured"),
             t("cfg.configureNow")

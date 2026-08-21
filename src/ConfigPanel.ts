@@ -36,22 +36,40 @@ export class ConfigPanel {
                     this._sendCurrentSettings();
                     break;
                 case "browse": {
-                    const isWin = process.platform === "win32";
-                    const picked = await vscode.window.showOpenDialog({
-                        title: msg.field === "sugarbox"
-                            ? "Sélectionner l'exécutable Sugarbox"
-                            : "Sélectionner l'exécutable RASM",
-                        canSelectMany: false,
-                        filters: isWin
-                            ? { "Exécutables": ["exe"] }
-                            : { "Tous les fichiers": ["*"] }
-                    });
-                    if (picked) {
-                        this._panel.webview.postMessage({
-                            type: "setPath",
-                            field: msg.field,
-                            value: picked[0].fsPath
+                    const isRemote = !!vscode.env.remoteName;
+                    const isWin    = process.platform === "win32";
+
+                    if (isRemote) {
+                        // In Remote-WSL, showOpenDialog opens the Windows filesystem
+                        // and can't browse WSL paths → use an inputBox instead.
+                        const cfgKey = msg.field === "sugarbox" ? "sugarbox" : "rasm";
+                        const current = vscode.workspace.getConfiguration("z80debug").get<string>(cfgKey, "");
+                        const entered = await vscode.window.showInputBox({
+                            title: msg.field === "sugarbox"
+                                ? "Chemin vers l'exécutable Sugarbox"
+                                : "Chemin vers l'exécutable RASM",
+                            prompt: "Chemin absolu vers l'exécutable",
+                            value: current,
+                            ignoreFocusOut: true
                         });
+                        if (entered !== undefined) {
+                            this._panel.webview.postMessage({ type: "setPath", field: msg.field, value: entered });
+                        }
+                    } else {
+                        const picked = await vscode.window.showOpenDialog({
+                            title: msg.field === "sugarbox"
+                                ? "Sélectionner l'exécutable Sugarbox"
+                                : "Sélectionner l'exécutable RASM",
+                            canSelectFiles: true,
+                            canSelectFolders: false,
+                            canSelectMany: false,
+                            filters: isWin
+                                ? { "Exécutables": ["exe"] }
+                                : { "Tous les fichiers": ["*"] }
+                        });
+                        if (picked) {
+                            this._panel.webview.postMessage({ type: "setPath", field: msg.field, value: picked[0].fsPath });
+                        }
                     }
                     break;
                 }

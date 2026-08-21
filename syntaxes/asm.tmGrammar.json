@@ -1,0 +1,7 @@
+{
+  "name": "Z80 Assembly",
+  "scopeName": "source.asm.z80",
+  "patterns": [
+    { "include": "source.z80" }
+  ]
+}
