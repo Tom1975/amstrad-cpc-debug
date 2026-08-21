@@ -766,8 +766,8 @@ function settingsJson(buildName: string, sugarbox: string, rasm: string): string
     const s: Record<string, any> = {
         "z80debug.entryPoint": "src/main.asm",
         "z80debug.buildName": buildName,
-        "files.associations": { "*.asm": "asm-collection" },
-        "[asm-collection]": { "editor.colorDecorators": false },
+        "files.associations": { "*.asm": "z80-asm" },
+        "[z80-asm]":        { "editor.colorDecorators": false },
         "[z80-disasm]":     { "editor.colorDecorators": false }
     };
     if (sugarbox) { s["z80debug.sugarbox"] = sugarbox; }

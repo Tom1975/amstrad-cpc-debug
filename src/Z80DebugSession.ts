@@ -10,6 +10,7 @@ import { DebugProtocol } from "vscode-debugprotocol";
 import { EmulatorClient } from "./EmulatorClient";
 import { SymbolTable } from "./SymbolTable";
 import { SourceAnnotations } from "./SourceAnnotations";
+import { SourceMap } from "./SourceMap";
 import { StoppedEvent } from 'vscode-debugadapter';
 import { Thread } from 'vscode-debugadapter';
 import { StackFrame, Source } from 'vscode-debugadapter';
@@ -99,6 +100,7 @@ export class Z80DebugSession extends DebugSession {
 
     // Source annotations (optional, loaded from sourceFile arg)
     private sourceAnnotations: SourceAnnotations | null = null;
+    private sourceMap: SourceMap | null = null;
 
     // Global breakpoint registry: key → list of addresses
     // "src:<sourceRef>" for source breakpoints, "instr" for instruction breakpoints
@@ -136,6 +138,7 @@ protected initializeRequest(
         supportsWriteMemoryRequest: true,
         supportsFunctionBreakpoints: true,
         supportsCompletionsRequest: true,
+        supportsBreakpointLocationsRequest: true,
     };
     // supportsInlineBreakpoints not in old typings — add via cast
     (response.body as any).supportsInlineBreakpoints = true;
@@ -146,6 +149,48 @@ protected initializeRequest(
     // would trigger VS Code to send configurationDone before the socket exists.
 }
 
+protected breakpointLocationsRequest(
+    response: DebugProtocol.BreakpointLocationsResponse,
+    args: DebugProtocol.BreakpointLocationsArguments
+): void {
+    const srcPath = args.source.path ?? "";
+    const start   = args.line;
+    const end     = args.endLine ?? args.line;
+
+    let locations: DebugProtocol.BreakpointLocation[];
+
+    if (this.sourceMap && this.isSameSourceFile(srcPath, this.sourceMap.sourceFile)) {
+        // Precise info available — show dots only on instruction lines.
+        locations = this.sourceMap.getValidLinesInRange(start, end)
+            .map(line => ({ line, column: 1 }));
+
+        // If the SourceMap returned nothing for this range (e.g. data section),
+        // fall back to allowing any line so we never silently block F9.
+        if (locations.length === 0) {
+            locations = this.allLinesInRange(start, end);
+        }
+    } else {
+        // SourceMap not loaded yet or file not recognised — allow every line.
+        // setBreakpointsRequest will snap/reject as needed.
+        locations = this.allLinesInRange(start, end);
+    }
+
+    response.body = { breakpoints: locations };
+    this.sendResponse(response);
+}
+
+private allLinesInRange(start: number, end: number): DebugProtocol.BreakpointLocation[] {
+    const out: DebugProtocol.BreakpointLocation[] = [];
+    const cap = Math.min(end, start + 9999);
+    for (let l = start; l <= cap; l++) out.push({ line: l, column: 1 });
+    return out;
+}
+
+/** Loose path equality — normalises separators and resolves case. */
+private isSameSourceFile(a: string, b: string): boolean {
+    const norm = (p: string) => p.replace(/\\/g, "/").toLowerCase();
+    return norm(a) === norm(b);
+}
 
 private loadSymbols(args: any): void {
     console.log(`DAP: loadSymbols — symbolFile=${args.symbolFile ?? "(none)"} sourceFile=${args.sourceFile ?? "(none)"} snapshot=${args.snapshot ?? "(none)"}`);
@@ -154,6 +199,7 @@ private loadSymbols(args: any): void {
     }
     if (args.sourceFile) {
         this.sourceAnnotations = SourceAnnotations.fromFile(args.sourceFile);
+        this.sourceMap = SourceMap.build(args.sourceFile, this.symbolTable);
     }
     if (args.snapshot) {
         const { table, breakpoints } = SymbolTable.fromSnapshotRemu(args.snapshot);
@@ -167,7 +213,7 @@ private loadSymbols(args: any): void {
             console.log(`DAP: ${breakpoints.length} breakpoint(s) loaded from snapshot REMU`);
         }
     }
-    console.log(`DAP: loadSymbols done — symbolTable=${this.symbolTable?.size ?? "null"} symbols, sourceAnnotations=${this.sourceAnnotations ? "loaded" : "null"}`);
+    console.log(`DAP: loadSymbols done — symbolTable=${this.symbolTable?.size ?? "null"} symbols, sourceAnnotations=${this.sourceAnnotations ? "loaded" : "null"}, sourceMap=${this.sourceMap?.size ?? "null"} lines`);
 }
 
 protected async launchRequest(
@@ -747,28 +793,42 @@ private async isReturnAddress(addr: number): Promise<boolean> {
 
 // Build a single DAP StackFrame for a given PC and its disassembly region.
 private buildStackFrame(id: number, pc: number, region: DisasmRegion): DebugProtocol.StackFrame {
-    const pcHex = "0x" + pc.toString(16).padStart(4, "0");
-    const lineNo = region.addressToLine.get(pc) ?? 1;
+    const pcHex  = "0x" + pc.toString(16).padStart(4, "0");
     const labels = this.symbolTable?.getLabelsAt(pc);
-    const name = labels?.length ? labels[0] : (id === 0 ? "PC" : `ret #${pcHex}`);
-    const hex4 = region.startAddress.toString(16).padStart(4, "0").toUpperCase();
-    const sourceName = `Z80 0x${region.startAddress.toString(16).padStart(4, "0")}`;
-    // Use the z80disasm:/ URI as path so VS Code navigates to the already-open
-    // virtual document instead of opening a new one via sourceRequest.
-    const sourcePath = `z80disasm:/${region.memType}/${region.bank}/${hex4}.z80disasm`;
+    const name   = labels?.length ? labels[0] : (id === 0 ? "PC" : `ret #${pcHex}`);
+
+    // Prefer real source file when SourceMap has a mapping for this address.
+    const srcLine = this.sourceMap?.getNearestLine(pc);
+    let source: DebugProtocol.Source;
+    let lineNo: number;
+
+    if (srcLine !== undefined && this.sourceMap) {
+        // Point directly at the .asm file — VS Code opens it and highlights the line.
+        const asmFile = this.sourceMap.sourceFile;
+        source  = { name: nodePath.basename(asmFile), path: asmFile };
+        lineNo  = srcLine;
+    } else {
+        // Fallback: virtual disassembly document.
+        const hex4 = region.startAddress.toString(16).padStart(4, "0").toUpperCase();
+        source  = {
+            name: `Z80 0x${region.startAddress.toString(16).padStart(4, "0")}`,
+            // Use the z80disasm:/ URI so VS Code navigates to the already-open
+            // virtual document rather than triggering a sourceRequest.
+            path: `z80disasm:/${region.memType}/${region.bank}/${hex4}.z80disasm`,
+        };
+        lineNo = region.addressToLine.get(pc) ?? 1;
+    }
+
     const frame: DebugProtocol.StackFrame = {
         id,
         name,
-        line: lineNo,
+        line:   lineNo,
         column: 1,
-        source: { name: sourceName, path: sourcePath },
+        source,
         // instructionPointerReference intentionally omitted: its presence causes
-        // VS Code to auto-open the native Disassembly View even when a z80disasm:/
-        // virtual document is already shown.  Navigation and the execution cursor
-        // are fully handled via source.path + line above.
+        // VS Code to auto-open the native Disassembly View.
     };
-    // memoryReference (non-standard extension) is read by the DebugAdapterTracker
-    // in main.ts to obtain the current PC without an extra customRequest.
+    // memoryReference (non-standard) is read by the DebugAdapterTracker in main.ts.
     (frame as any).memoryReference = pcHex;
     return frame;
 }
@@ -1012,30 +1072,61 @@ protected async setBreakpointsRequest(
             this.sendResponse(response);
             return;
         }
-        // Real source file — resolve via nearest label in symbol table
-        const srcResults = bps.map(bp => {
+        // Real source file — resolve via SourceMap (exact) or nearest label (fallback).
+        const resolvedAddrs: (number | undefined)[] = [];
+
+        const srcResults = bps.map((bp, i) => {
             const line = bp.line;
+
+            // 1. Exact line → address from SourceMap
+            const exactAddr = this.sourceMap?.getAddress(line);
+            if (exactAddr !== undefined) {
+                resolvedAddrs[i] = exactAddr;
+                return {
+                    verified: true,
+                    line,
+                    message: `@ 0x${exactAddr.toString(16).toUpperCase().padStart(4, "0")}`,
+                };
+            }
+
+            // 2. Fallback: snap to nearest mapped line in the source map
+            const snapLine = this.sourceMap?.getNearestValidLine(line);
+            if (snapLine !== undefined) {
+                const snapAddr = this.sourceMap!.getAddress(snapLine)!;
+                resolvedAddrs[i] = snapAddr;
+                return {
+                    verified: true,
+                    line:    snapLine,
+                    message: `→ line ${snapLine} @ 0x${snapAddr.toString(16).toUpperCase().padStart(4, "0")}`,
+                };
+            }
+
+            // 3. Last resort: snap to nearest label (pre-SourceMap behaviour)
             const label = this.sourceAnnotations?.nearestLabelBefore(line);
             if (!label) {
-                return { verified: false, message: "No label found before this line — place breakpoint on or after a label" };
+                resolvedAddrs[i] = undefined;
+                return { verified: false, message: "No address mapping — rebuild the project" };
             }
             const addr = this.symbolTable?.resolveLabel(label);
             if (addr === undefined) {
+                resolvedAddrs[i] = undefined;
                 return { verified: false, message: `Label '${label}' not found in symbol file` };
             }
-            return { verified: true, line: this.sourceAnnotations!.getAnnotation(label)!.lineNumber, message: `→ ${label} @ 0x${addr.toString(16).toUpperCase().padStart(4, "0")}` };
+            resolvedAddrs[i] = addr;
+            const labelLine = this.sourceAnnotations!.getAnnotation(label)!.lineNumber;
+            return {
+                verified: true,
+                line:    labelLine,
+                message: `→ ${label} @ 0x${addr.toString(16).toUpperCase().padStart(4, "0")}`,
+            };
         });
 
-        const addresses = srcResults
-            .map((r, i) => {
-                if (!r.verified) return undefined;
-                const label = this.sourceAnnotations!.nearestLabelBefore(bps[i].line)!;
-                return this.symbolTable!.resolveLabel(label)!;
-            })
-            .filter((a): a is number => a !== undefined);
+        const addresses = resolvedAddrs.filter((a): a is number => a !== undefined);
 
         this.bpRegistry.set(`source:${args.source.path}`, addresses);
-        await this.flushBreakpoints();
+        try { await this.flushBreakpoints(); } catch (e) {
+            console.warn("DAP: flushBreakpoints failed (emulator may not be ready):", e);
+        }
 
         response.body = { breakpoints: srcResults };
         this.sendResponse(response);
