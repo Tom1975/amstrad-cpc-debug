@@ -152,7 +152,16 @@ export function activate(context: vscode.ExtensionContext) {
                 let firstStop = true;
                 return {
                     onWillStopSession() { currentZ80Session = undefined; },
+                    onWillReceiveMessage(message: any) {
+                        // Temporary full trace to diagnose why setBreakpoints never fires.
+                        z80Out.appendLine(`→ req  #${message.seq} ${message.command} ${JSON.stringify(message.arguments)}`);
+                    },
                     onDidSendMessage(message: any) {
+                        if (message.type === "response") {
+                            z80Out.appendLine(`← resp #${message.request_seq} ${message.command} success=${message.success}${message.success ? "" : " message=" + message.message} ${JSON.stringify(message.body)}`);
+                        } else if (message.type === "event") {
+                            z80Out.appendLine(`← evt  ${message.event} ${JSON.stringify(message.body)}`);
+                        }
                         if (message.type === "response" && message.command === "configurationDone" && message.success) {
                             // Re-apply persisted direct breakpoints to the new session
                             const addrs = [...bpAddresses];

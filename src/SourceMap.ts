@@ -236,7 +236,6 @@ function rasmDirSize(dir: string, args: string, currentAddr: number | undefined)
         case 'IF': case 'IFDEF': case 'IFNDEF': case 'ELSE': case 'ELSEIF': case 'ENDIF':
         case 'WHILE': case 'WEND': case 'REPEAT': case 'REND':
         case 'STRUCT': case 'ENDS':
-        case 'INCLUDE':     // don't follow includes for now
         case 'MODULE': case 'ENDMODULE': case 'LORGSET':
             return { kind: "zero" };
 
@@ -295,22 +294,33 @@ function rasmDirSize(dir: string, args: string, currentAddr: number | undefined)
 
 // ─── SourceMap ────────────────────────────────────────────────────────────────
 
+/** Normalise a path for use as a map key (case/slash-insensitive comparison). */
+function normPath(p: string): string {
+    return path.resolve(p).replace(/\\/g, "/").toLowerCase();
+}
+
 /**
- * Maps source lines ↔ Z80 addresses for a single .asm file, built by:
+ * Maps source lines ↔ Z80 addresses across an entry .asm file and everything
+ * it INCLUDEs, built by:
  *  1. Using labels from the symbol table (.rasm) as address anchors.
  *  2. Accumulating Z80 instruction / data byte counts between anchors.
+ * INCLUDE directives are followed and inlined at parse time, since the
+ * assembler places included code at the point of inclusion.
  */
 export class SourceMap {
     readonly sourceFile: string;
 
-    /** line (1-based) → Z80 address */
-    private readonly lineToAddr = new Map<number, number>();
+    /** normalised file path → (line (1-based) → Z80 address) */
+    private readonly lineToAddr = new Map<string, Map<number, number>>();
 
-    /** Sorted by address for fast reverse lookup */
-    private readonly byAddr: Array<{ address: number; line: number }> = [];
+    /** Sorted by address for fast reverse lookup, across all files */
+    private readonly byAddr: Array<{ address: number; file: string; line: number }> = [];
 
-    /** Sorted list of all mapped line numbers — for breakpoint location queries */
-    private readonly byLine: number[] = [];
+    /** normalised file path → sorted list of mapped line numbers */
+    private readonly byLine = new Map<string, number[]>();
+
+    /** normalised file path → original on-disk path, for display */
+    private readonly displayPath = new Map<string, string>();
 
     private constructor(file: string) { this.sourceFile = file; }
 
@@ -318,12 +328,40 @@ export class SourceMap {
 
     static build(asmFile: string, symbolTable: SymbolTable | null): SourceMap {
         const map = new SourceMap(asmFile);
+        map.parseFile(asmFile, symbolTable, { addr: undefined }, new Set());
+
+        for (const [file, lm] of map.lineToAddr) {
+            const lines = [...lm.keys()].sort((a, b) => a - b);
+            map.byLine.set(file, lines);
+            for (const [line, address] of lm) {
+                map.byAddr.push({ address, file, line });
+            }
+        }
+        map.byAddr.sort((a, b) => a.address - b.address);
+
+        return map;
+    }
+
+    /** Parse one file (recursing into INCLUDEs), threading the current address across files. */
+    private parseFile(
+        asmFile: string,
+        symbolTable: SymbolTable | null,
+        state: { addr: number | undefined },
+        activeStack: Set<string>
+    ): void {
+        const key = normPath(asmFile);
+        if (activeStack.has(key)) return; // circular INCLUDE guard
+
         let raw: string;
         try { raw = fs.readFileSync(asmFile, "utf-8"); }
-        catch { return map; }
+        catch { return; }
 
+        this.displayPath.set(key, asmFile);
+        let fileLines = this.lineToAddr.get(key);
+        if (!fileLines) { fileLines = new Map(); this.lineToAddr.set(key, fileLines); }
+
+        activeStack.add(key);
         const lines = raw.split(/\r?\n/);
-        let addr: number | undefined = undefined;
 
         for (let i = 0; i < lines.length; i++) {
             const lineNo = i + 1;
@@ -340,17 +378,17 @@ export class SourceMap {
                 const labelName = lm[1];
                 const known = symbolTable?.resolveLabel(labelName);
                 if (known !== undefined) {
-                    addr = known;
+                    state.addr = known;
                 }
-                if (addr !== undefined && !anchoredThisLine) {
-                    map.lineToAddr.set(lineNo, addr);
+                if (state.addr !== undefined && !anchoredThisLine) {
+                    fileLines.set(lineNo, state.addr);
                     anchoredThisLine = true;
                 }
                 text = text.slice(lm[0].length);
                 if (!text) break;
             }
             if (!text) continue;
-            if (addr === undefined) continue;
+            if (state.addr === undefined) continue;
 
             // ── Parse mnemonic + operands ────────────────────────────────────
             const pm = text.match(/^(\w+)(?:\s+(.*))?$/);
@@ -358,16 +396,26 @@ export class SourceMap {
             const [, mnem, rawArgs] = pm;
             const args = (rawArgs ?? '').trim();
 
+            // ── INCLUDE: recurse into the referenced file in place ───────────
+            if (mnem.toUpperCase() === 'INCLUDE') {
+                const incName = splitCSV(args)[0]?.trim().replace(/^["']|["']$/g, '');
+                if (incName) {
+                    const incPath = path.resolve(path.dirname(asmFile), incName);
+                    this.parseFile(incPath, symbolTable, state, activeStack);
+                }
+                continue;
+            }
+
             // ── Try RASM directive first ─────────────────────────────────────
-            const dr = rasmDirSize(mnem, args, addr);
+            const dr = rasmDirSize(mnem, args, state.addr);
             if (dr.kind === "org") {
-                addr = dr.n;       // ORG resets address, no mapping entry
+                state.addr = dr.n;       // ORG resets address, no mapping entry
                 continue;
             }
             if (dr.kind === "bytes") {
                 if (dr.n > 0) {
-                    if (!anchoredThisLine) map.lineToAddr.set(lineNo, addr);
-                    addr += dr.n;
+                    if (!anchoredThisLine) fileLines.set(lineNo, state.addr);
+                    state.addr += dr.n;
                 }
                 continue;
             }
@@ -376,53 +424,54 @@ export class SourceMap {
             // ── Try Z80 instruction ──────────────────────────────────────────
             const sz = z80Size(mnem, args);
             if (sz !== null && sz > 0) {
-                if (!anchoredThisLine) map.lineToAddr.set(lineNo, addr);
-                addr += sz;
+                if (!anchoredThisLine) fileLines.set(lineNo, state.addr);
+                state.addr += sz;
             }
             // sz === null  →  unknown (macro call?); skip, don't advance addr
         }
 
-        // Build sorted reverse indices
-        for (const [line, address] of map.lineToAddr) {
-            map.byAddr.push({ address, line });
-            map.byLine.push(line);
-        }
-        map.byAddr.sort((a, b) => a.address - b.address);
-        map.byLine.sort((a, b) => a - b);
-
-        return map;
+        activeStack.delete(key);
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────
 
-    /** Z80 address for a source line, or undefined. */
-    getAddress(line: number): number | undefined {
-        return this.lineToAddr.get(line);
+    /** True if `file` has any mapped lines (i.e. is the entry file or one of its INCLUDEs). */
+    hasFile(file: string): boolean {
+        return this.lineToAddr.has(normPath(file));
+    }
+
+    /** Z80 address for a line in `file`, or undefined. */
+    getAddress(file: string, line: number): number | undefined {
+        return this.lineToAddr.get(normPath(file))?.get(line);
     }
 
     /**
-     * Source line whose address is ≤ `address` and closest to it.
+     * File + source line whose address is ≤ `address` and closest to it.
      * Suitable for pointing the stack frame cursor.
      */
-    getNearestLine(address: number): number | undefined {
+    getNearestLine(address: number): { file: string; line: number } | undefined {
         const a = this.byAddr;
         if (!a.length) return undefined;
-        let lo = 0, hi = a.length - 1, result: number | undefined;
+        let lo = 0, hi = a.length - 1, result: { file: string; line: number } | undefined;
         while (lo <= hi) {
             const mid = (lo + hi) >> 1;
-            if (a[mid].address <= address) { result = a[mid].line; lo = mid + 1; }
-            else                           { hi = mid - 1; }
+            if (a[mid].address <= address) {
+                result = { file: this.displayPath.get(a[mid].file) ?? a[mid].file, line: a[mid].line };
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
         }
         return result;
     }
 
-    /** Exact address → line (only when the address is the start of a mapped line). */
-    getLine(address: number): number | undefined {
+    /** Exact address → file + line (only when the address is the start of a mapped line). */
+    getLine(address: number): { file: string; line: number } | undefined {
         const a = this.byAddr;
         let lo = 0, hi = a.length - 1;
         while (lo <= hi) {
             const mid = (lo + hi) >> 1;
-            if      (a[mid].address === address) return a[mid].line;
+            if      (a[mid].address === address) return { file: this.displayPath.get(a[mid].file) ?? a[mid].file, line: a[mid].line };
             else if (a[mid].address < address)   lo = mid + 1;
             else                                 hi = mid - 1;
         }
@@ -430,11 +479,12 @@ export class SourceMap {
     }
 
     /**
-     * All mapped line numbers in [startLine, endLine] (both inclusive, 1-based).
+     * All mapped line numbers of `file` in [startLine, endLine] (both inclusive, 1-based).
      * Used by `breakpointLocations` to tell VS Code which lines accept a breakpoint.
      */
-    getValidLinesInRange(startLine: number, endLine: number): number[] {
-        const arr = this.byLine;
+    getValidLinesInRange(file: string, startLine: number, endLine: number): number[] {
+        const arr = this.byLine.get(normPath(file));
+        if (!arr) return [];
         // Binary search for the first line >= startLine
         let lo = 0, hi = arr.length - 1, first = arr.length;
         while (lo <= hi) {
@@ -449,36 +499,9 @@ export class SourceMap {
         return result;
     }
 
-    /**
-     * Nearest line in the map to `targetLine`.
-     * Prefers the line immediately at or after `target` (next instruction),
-     * falls back to the line before.  Returns undefined if the map is empty.
-     */
-    getNearestValidLine(targetLine: number): number | undefined {
-        if (this.lineToAddr.has(targetLine)) return targetLine;
-
-        const arr = this.byLine;
-        if (!arr.length) return undefined;
-
-        // Binary search: first line >= targetLine
-        let lo = 0, hi = arr.length - 1, afterIdx = arr.length;
-        while (lo <= hi) {
-            const mid = (lo + hi) >> 1;
-            if (arr[mid] >= targetLine) { afterIdx = mid; hi = mid - 1; }
-            else                        { lo = mid + 1; }
-        }
-
-        const after  = afterIdx < arr.length   ? arr[afterIdx]     : undefined;
-        const before = afterIdx > 0            ? arr[afterIdx - 1] : undefined;
-
-        if (after  === undefined) return before;
-        if (before === undefined) return after;
-
-        const dAfter  = after  - targetLine;
-        const dBefore = targetLine - before;
-        // Prefer "after" on equal distance (next instruction is more intuitive)
-        return dAfter <= dBefore ? after : before;
+    get size(): number {
+        let n = 0;
+        for (const lm of this.lineToAddr.values()) n += lm.size;
+        return n;
     }
-
-    get size(): number { return this.lineToAddr.size; }
 }

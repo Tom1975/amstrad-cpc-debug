@@ -159,9 +159,9 @@ protected breakpointLocationsRequest(
 
     let locations: DebugProtocol.BreakpointLocation[];
 
-    if (this.sourceMap && this.isSameSourceFile(srcPath, this.sourceMap.sourceFile)) {
+    if (this.sourceMap && this.sourceMap.hasFile(srcPath)) {
         // Precise info available — show dots only on instruction lines.
-        locations = this.sourceMap.getValidLinesInRange(start, end)
+        locations = this.sourceMap.getValidLinesInRange(srcPath, start, end)
             .map(line => ({ line, column: 1 }));
 
         // If the SourceMap returned nothing for this range (e.g. data section),
@@ -798,15 +798,14 @@ private buildStackFrame(id: number, pc: number, region: DisasmRegion): DebugProt
     const name   = labels?.length ? labels[0] : (id === 0 ? "PC" : `ret #${pcHex}`);
 
     // Prefer real source file when SourceMap has a mapping for this address.
-    const srcLine = this.sourceMap?.getNearestLine(pc);
+    const hit = this.sourceMap?.getNearestLine(pc);
     let source: DebugProtocol.Source;
     let lineNo: number;
 
-    if (srcLine !== undefined && this.sourceMap) {
+    if (hit !== undefined) {
         // Point directly at the .asm file — VS Code opens it and highlights the line.
-        const asmFile = this.sourceMap.sourceFile;
-        source  = { name: nodePath.basename(asmFile), path: asmFile };
-        lineNo  = srcLine;
+        source  = { name: nodePath.basename(hit.file), path: hit.file };
+        lineNo  = hit.line;
     } else {
         // Fallback: virtual disassembly document.
         const hex4 = region.startAddress.toString(16).padStart(4, "0").toUpperCase();
@@ -1043,16 +1042,24 @@ private regionFromDisasmPath(path: string): DisasmRegion | undefined {
 // Merge all registered breakpoints and send the unified list to the emulator.
 private async flushBreakpoints(): Promise<void> {
     const allAddresses: number[] = [];
-    for (const addrs of this.bpRegistry.values()) {
+    for (const [src, addrs] of this.bpRegistry) {
+        console.log(`DAP: flushBreakpoints — registry[${src}] = [${addrs.map(a => "0x" + a.toString(16).toUpperCase().padStart(4, "0")).join(", ")}]`);
         allAddresses.push(...addrs);
     }
     // Deduplicate
     const unique = [...new Set(allAddresses)].map(a => ({ address: a }));
-    await this.emulator.send({ cmd: "setBreakpoints", breakpoints: unique });
+    const addrList = unique.map(b => "0x" + b.address.toString(16).toUpperCase().padStart(4, "0")).join(", ");
+    console.log(`DAP: flushBreakpoints — sending to emulator: [${addrList}]`);
+    this.sendEvent(new OutputEvent(`[Z80 Debug] Breakpoints sent to emulator: [${addrList}]\n`, "console"));
+    const reply = await this.emulator.send({ cmd: "setBreakpoints", breakpoints: unique });
+    console.log(`DAP: flushBreakpoints — emulator reply: ${JSON.stringify(reply)}`);
+    if (reply?.error) {
+        this.sendEvent(new OutputEvent(`[Z80 Debug] setBreakpoints error from emulator: ${reply.error}\n`, "stderr"));
+    }
 }
 
 // Source breakpoints (virtual disassembly sources)
-protected async setBreakpointsRequest(
+protected async setBreakPointsRequest(
     response: DebugProtocol.SetBreakpointsResponse,
     args: DebugProtocol.SetBreakpointsArguments
 ) {
@@ -1074,34 +1081,35 @@ protected async setBreakpointsRequest(
         }
         // Real source file — resolve via SourceMap (exact) or nearest label (fallback).
         const resolvedAddrs: (number | undefined)[] = [];
+        const knownFile = this.sourceMap?.hasFile(srcPath) ?? false;
 
         const srcResults = bps.map((bp, i) => {
             const line = bp.line;
 
-            // 1. Exact line → address from SourceMap
-            const exactAddr = this.sourceMap?.getAddress(line);
-            if (exactAddr !== undefined) {
-                resolvedAddrs[i] = exactAddr;
-                return {
-                    verified: true,
-                    line,
-                    message: `@ 0x${exactAddr.toString(16).toUpperCase().padStart(4, "0")}`,
-                };
+            // 1. Exact line → address from SourceMap (covers the entry file and its INCLUDEs)
+            if (knownFile) {
+                const exactAddr = this.sourceMap!.getAddress(srcPath, line);
+                if (exactAddr !== undefined) {
+                    resolvedAddrs[i] = exactAddr;
+                    return {
+                        verified: true,
+                        line,
+                        message: `@ 0x${exactAddr.toString(16).toUpperCase().padStart(4, "0")}`,
+                    };
+                }
+                // Known file, but this line carries no code (label-less comment,
+                // blank line, EQU/IF/MACRO directive, …) — don't move the
+                // breakpoint elsewhere, just refuse it.
+                resolvedAddrs[i] = undefined;
+                return { verified: false, line, message: "No code at this line" };
             }
 
-            // 2. Fallback: snap to nearest mapped line in the source map
-            const snapLine = this.sourceMap?.getNearestValidLine(line);
-            if (snapLine !== undefined) {
-                const snapAddr = this.sourceMap!.getAddress(snapLine)!;
-                resolvedAddrs[i] = snapAddr;
-                return {
-                    verified: true,
-                    line:    snapLine,
-                    message: `→ line ${snapLine} @ 0x${snapAddr.toString(16).toUpperCase().padStart(4, "0")}`,
-                };
+            // 2. File not covered by the SourceMap: last resort, snap to nearest
+            //    label in the main source file (pre-SourceMap behaviour).
+            if (!this.isSameSourceFile(srcPath, this.sourceMap?.sourceFile ?? "")) {
+                resolvedAddrs[i] = undefined;
+                return { verified: false, message: "File not recognised — rebuild the project" };
             }
-
-            // 3. Last resort: snap to nearest label (pre-SourceMap behaviour)
             const label = this.sourceAnnotations?.nearestLabelBefore(line);
             if (!label) {
                 resolvedAddrs[i] = undefined;
@@ -1123,9 +1131,17 @@ protected async setBreakpointsRequest(
 
         const addresses = resolvedAddrs.filter((a): a is number => a !== undefined);
 
+        const summary = srcResults.map((r, i) =>
+            `line ${bps[i].line} → ${r.verified ? "0x" + resolvedAddrs[i]!.toString(16).toUpperCase().padStart(4, "0") : "REFUSED"} (${r.message})`
+        ).join("\n  ");
+        console.log(`DAP: setBreakpointsRequest resolved — file=${srcPath}\n  ${summary}`);
+        this.sendEvent(new OutputEvent(`[Z80 Debug] Breakpoints in ${srcPath}:\n  ${summary}\n`, "console"));
+
         this.bpRegistry.set(`source:${args.source.path}`, addresses);
         try { await this.flushBreakpoints(); } catch (e) {
-            console.warn("DAP: flushBreakpoints failed (emulator may not be ready):", e);
+            const msg = `[Z80 Debug] flushBreakpoints failed (emulator may not be ready): ${e}\n`;
+            console.warn(msg);
+            this.sendEvent(new OutputEvent(msg, "stderr"));
         }
 
         response.body = { breakpoints: srcResults };
@@ -1188,7 +1204,7 @@ private static parseAddress(s: string): number | undefined {
 
 // Label breakpoints — VS Code "function breakpoints" panel, adapted for Z80 assembly labels.
 // Also accepts raw addresses: "0xBB5A", "$BB5A", "BB5A", "47962".
-protected async setFunctionBreakpointsRequest(
+protected async setFunctionBreakPointsRequest(
     response: DebugProtocol.SetFunctionBreakpointsResponse,
     args: DebugProtocol.SetFunctionBreakpointsArguments
 ) {
