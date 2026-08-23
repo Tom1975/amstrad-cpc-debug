@@ -13,6 +13,7 @@
     "cmd.showFdcPanel":       "Show FDC Panel",
     "cmd.showPpiPanel":       "Show PPI (8255) Panel",
     "cmd.showTapePanel":      "Show Cassette Panel",
+    "cmd.showScreenPanel":    "Show CPC Screen Panel",
 
     "view.launcher": "Amstrad CPC",
     "view.hardware": "CPC Hardware",

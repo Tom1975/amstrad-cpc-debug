@@ -445,6 +445,8 @@ protected async launchRequest(
             this.sendEvent(new StoppedEvent(reason, 1));
         } else if (evt.event === "mediaChanged") {
             this.sendEvent({ type: "event", event: "mediaChanged", seq: 0, body: evt.body } as DebugProtocol.Event);
+        } else if (evt.event === "frame") {
+            this.sendEvent({ type: "event", event: "frame", seq: 0, body: evt.body } as DebugProtocol.Event);
         }
     };
 
@@ -518,6 +520,8 @@ protected async attachRequest(
             this.sendEvent(new StoppedEvent(reason, 1));
         } else if (evt.event === "mediaChanged") {
             this.sendEvent({ type: "event", event: "mediaChanged", seq: 0, body: evt.body } as DebugProtocol.Event);
+        } else if (evt.event === "frame") {
+            this.sendEvent({ type: "event", event: "frame", seq: 0, body: evt.body } as DebugProtocol.Event);
         }
     };
 
@@ -1492,6 +1496,12 @@ protected async customRequest(
         await this._forwardHardwareRequest(response, "getAsicState", 1246);
     } else if (command === "getTapeSignal") {
         await this._forwardHardwareRequest(response, "getTapeSignal", 1248);
+    } else if (command === "getScreen") {
+        await this._forwardHardwareRequest(response, "getScreen", 1249);
+    } else if (command === "subscribeScreen") {
+        await this._forwardHardwareRequest(response, "subscribeScreen", 1250);
+    } else if (command === "unsubscribeScreen") {
+        await this._forwardHardwareRequest(response, "unsubscribeScreen", 1251);
     } else if (command === "getTrackRaw") {
         try {
             const result = await this.emulator.send({ cmd: "getTrackRaw", ...args });

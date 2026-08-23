@@ -462,11 +462,13 @@ Returns the state of the CRTC 6845 (or ASIC for CPC+).
 {
   "selectedRegister": 12,
   "registers": [63, 40, 46, 140, 38, 0, 25, 30, 0, 7, 0, 0, 48, 0, 192, 0, 0],
-  "mode": "asic"
+  "mode": "asic",
+  "beamX": 512, "beamY": 150,
+  "hSyncActive": false, "vSyncActive": false
 }
 ```
 
-`registers`: array of 17 values (R0–R16).
+`registers`: array of 17 values (R0–R16). `hSyncActive`/`vSyncActive`: real-time state of the CRTC's HSYNC/VSYNC output signals for the current pixel (booleans; optional — omit or default `false` if unsupported).
 
 **Response (CPC+ ASIC mode)** — additional fields:
 ```json
@@ -619,6 +621,36 @@ Returns a sampled cassette signal suitable for waveform display.
 
 ---
 
+#### `getScreen`
+
+Returns a single snapshot of the currently displayed CPC screen, cropped to the visible window and de-interlaced (i.e. what a real monitor would show).
+
+**Request:** `{ "cmd": "getScreen" }`
+
+**Response:**
+```json
+{
+  "format": "png",
+  "width": 768,
+  "height": 544,
+  "data": "<base64-encoded PNG bytes>"
+}
+```
+
+If capture is unsupported or unavailable, return `{ "error": "screen capture unavailable" }`.
+
+---
+
+#### `subscribeScreen` / `unsubscribeScreen`
+
+Enable/disable a continuous stream of `frame` events (see below), pushed once per VSync (~50Hz) while subscribed. Only one subscription state is tracked per connection; the emulator should stop pushing frames (and skip the associated capture/encode cost) when unsubscribed, and implicitly unsubscribe when the client disconnects.
+
+**Request:** `{ "cmd": "subscribeScreen" }` / `{ "cmd": "unsubscribeScreen" }`
+
+**Response:** `{ "status": "ok" }`
+
+---
+
 #### `getTrackRaw`
 
 Returns the raw MFM bitfield for a track, used by the FDC panel's hex and bitmap views.
@@ -711,6 +743,20 @@ A disk or tape was inserted or ejected while the emulator is running.
 ```
 
 The FDC panel refreshes automatically when this event is received.
+
+---
+
+### `frame`
+
+Pushed once per VSync (~50Hz) while a client is subscribed via `subscribeScreen`. Same payload shape as `getScreen`'s response.
+
+```json
+{
+  "type": "event",
+  "event": "frame",
+  "body": { "format": "png", "width": 768, "height": 544, "data": "<base64>" }
+}
+```
 
 ---
 

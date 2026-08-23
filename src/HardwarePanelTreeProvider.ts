@@ -7,6 +7,7 @@ interface PanelEntry {
 }
 
 const PANELS: PanelEntry[] = [
+    { label: "CPC Screen",       command: "z80debug.showScreenPanel",   ready: true  },
     { label: "CRTC / ASIC",     command: "z80debug.showCrtcPanel",     ready: true  },
     { label: "Gate Array",       command: "z80debug.showGateArrayPanel", ready: true  },
     { label: "PSG (AY-3-8912)", command: "z80debug.showPsgPanel",      ready: true  },

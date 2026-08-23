@@ -163,6 +163,11 @@
         "command": "z80debug.showTapePanel",
         "title": "%cmd.showTapePanel%",
         "category": "Z80 Debug"
+      },
+      {
+        "command": "z80debug.showScreenPanel",
+        "title": "%cmd.showScreenPanel%",
+        "category": "Z80 Debug"
       }
     ],
     "viewsWelcome": [

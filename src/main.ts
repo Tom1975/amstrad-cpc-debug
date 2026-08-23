@@ -10,6 +10,7 @@ import { PsgPanel } from "./PsgPanel";
 import { PpiPanel } from "./PpiPanel";
 import { FdcPanel } from "./FdcPanel";
 import { TapePanel } from "./TapePanel";
+import { ScreenPanel } from "./ScreenPanel";
 import { HardwarePanelTreeProvider } from "./HardwarePanelTreeProvider";
 import { ConfigPanel } from "./ConfigPanel";
 import { ProjectPanel } from "./ProjectPanel";
@@ -159,7 +160,9 @@ export function activate(context: vscode.ExtensionContext) {
                     onDidSendMessage(message: any) {
                         if (message.type === "response") {
                             z80Out.appendLine(`← resp #${message.request_seq} ${message.command} success=${message.success}${message.success ? "" : " message=" + message.message} ${JSON.stringify(message.body)}`);
-                        } else if (message.type === "event") {
+                        } else if (message.type === "event" && message.event !== "frame") {
+                            // "frame" events carry a base64 image and fire at ~50Hz — logging them
+                            // would flood the output channel and hurt performance for no benefit.
                             z80Out.appendLine(`← evt  ${message.event} ${JSON.stringify(message.body)}`);
                         }
                         if (message.type === "response" && message.command === "configurationDone" && message.success) {
@@ -231,6 +234,11 @@ export function activate(context: vscode.ExtensionContext) {
                             FdcPanel.currentPanel?.refresh().catch(() => {});
                         } else if (
                             message.type === "event" &&
+                            message.event === "frame"
+                        ) {
+                            ScreenPanel.currentPanel?.pushFrame(message.body).catch(() => {});
+                        } else if (
+                            message.type === "event" &&
                             (message.event === "continued" || message.event === "terminated")
                         ) {
                             currentPcAddress = undefined;
@@ -273,6 +281,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand("z80debug.showFdcPanel",        () => FdcPanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showPpiPanel",        () => PpiPanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showTapePanel",       () => TapePanel.createOrShow()),
+        vscode.commands.registerCommand("z80debug.showScreenPanel",     () => ScreenPanel.createOrShow()),
     );
 
     // ── Command: open disassembly at address ──────────────────────────────────
