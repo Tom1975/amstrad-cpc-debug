@@ -59,6 +59,18 @@
           "type": "boolean",
           "default": false,
           "description": "%cfg.hideEmulator.desc%"
+        },
+        "z80debug.keyboardLayout": {
+          "type": "string",
+          "default": "EN",
+          "enum": ["EN", "FR", "DE", "ES"],
+          "enumDescriptions": [
+            "English QWERTY",
+            "French AZERTY",
+            "German QWERTZ",
+            "Spanish QWERTY"
+          ],
+          "description": "%cfg.keyboardLayout.desc%"
         }
       }
     },
@@ -167,6 +179,16 @@
       {
         "command": "z80debug.showScreenPanel",
         "title": "%cmd.showScreenPanel%",
+        "category": "Z80 Debug"
+      },
+      {
+        "command": "z80debug.showKeyboardPanel",
+        "title": "%cmd.showKeyboardPanel%",
+        "category": "Z80 Debug"
+      },
+      {
+        "command": "z80debug.clearDirectBreakpoints",
+        "title": "%cmd.clearDirectBreakpoints%",
         "category": "Z80 Debug"
       }
     ],

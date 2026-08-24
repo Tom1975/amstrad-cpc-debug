@@ -14,6 +14,11 @@
     "cmd.showPpiPanel":       "Show PPI (8255) Panel",
     "cmd.showTapePanel":      "Show Cassette Panel",
     "cmd.showScreenPanel":    "Show CPC Screen Panel",
+    "cmd.showKeyboardPanel":        "Show CPC Virtual Keyboard",
+    "cmd.clearDirectBreakpoints":   "Clear all address breakpoints (z80bp)",
+    "cmd.clearDirectBp.none":       "No address breakpoints to clear.",
+    "cmd.clearDirectBp.done":       "Cleared {0} address breakpoint(s).",
+    "cfg.keyboardLayout.desc": "Keyboard layout for the virtual CPC keyboard panel (EN=QWERTY, FR=AZERTY, DE=QWERTZ, ES=Spanish)",
 
     "view.launcher": "Amstrad CPC",
     "view.hardware": "CPC Hardware",

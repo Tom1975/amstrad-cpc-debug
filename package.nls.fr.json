@@ -14,6 +14,11 @@
     "cmd.showPpiPanel":       "Afficher le panneau PPI (8255)",
     "cmd.showTapePanel":      "Afficher le panneau Cassette",
     "cmd.showScreenPanel":    "Afficher l'écran du CPC",
+    "cmd.showKeyboardPanel":        "Afficher le clavier virtuel CPC",
+    "cmd.clearDirectBreakpoints":   "Effacer tous les breakpoints d'adresse (z80bp)",
+    "cmd.clearDirectBp.none":       "Aucun breakpoint d'adresse à effacer.",
+    "cmd.clearDirectBp.done":       "{0} breakpoint(s) d'adresse effacé(s).",
+    "cfg.keyboardLayout.desc": "Disposition du clavier virtuel CPC (EN=QWERTY, FR=AZERTY, DE=QWERTZ, ES=Espagnol)",
 
     "view.launcher": "Amstrad CPC",
     "view.hardware": "Matériel CPC",

@@ -11,6 +11,7 @@ import { PpiPanel } from "./PpiPanel";
 import { FdcPanel } from "./FdcPanel";
 import { TapePanel } from "./TapePanel";
 import { ScreenPanel } from "./ScreenPanel";
+import { KeyboardPanel } from "./KeyboardPanel";
 import { HardwarePanelTreeProvider } from "./HardwarePanelTreeProvider";
 import { ConfigPanel } from "./ConfigPanel";
 import { ProjectPanel } from "./ProjectPanel";
@@ -69,6 +70,40 @@ const BP_DIRECT_KEY = "z80bp.direct";
 let currentPcAddress: number | undefined;
 let currentZ80Session: vscode.DebugSession | undefined;
 
+// Parse "0xNNNN" → number, or undefined if not a 4-digit hex address
+function parseHexAddr(name: string): number | undefined {
+    const m = name.match(/^0x([0-9a-fA-F]{1,4})$/i);
+    return m ? parseInt(m[1], 16) & 0xFFFF : undefined;
+}
+
+function hexBpName(addr: number): string {
+    return "0x" + addr.toString(16).toUpperCase().padStart(4, "0");
+}
+
+// Find the FunctionBreakpoint in VS Code's registry for a given address
+function findFunctionBp(addr: number): vscode.FunctionBreakpoint | undefined {
+    const name = hexBpName(addr);
+    return vscode.debug.breakpoints.find(
+        bp => bp instanceof vscode.FunctionBreakpoint && bp.functionName === name
+    ) as vscode.FunctionBreakpoint | undefined;
+}
+
+// Sync workspaceState addresses → VS Code Breakpoints panel (idempotent)
+function syncBreakpointsToVscode(): void {
+    // Remove stale hex FunctionBreakpoints not in bpAddresses
+    const toRemove = vscode.debug.breakpoints.filter(bp => {
+        if (!(bp instanceof vscode.FunctionBreakpoint)) { return false; }
+        const addr = parseHexAddr(bp.functionName);
+        return addr !== undefined && !bpAddresses.has(addr);
+    });
+    if (toRemove.length > 0) { vscode.debug.removeBreakpoints(toRemove); }
+    // Add missing ones
+    const toAdd = [...bpAddresses]
+        .filter(addr => !findFunctionBp(addr))
+        .map(addr => new vscode.FunctionBreakpoint(hexBpName(addr)));
+    if (toAdd.length > 0) { vscode.debug.addBreakpoints(toAdd); }
+}
+
 function refreshZ80BpDecorations() {
     for (const editor of vscode.window.visibleTextEditors) {
         if (editor.document.languageId !== "z80-disasm") continue;
@@ -116,10 +151,33 @@ export function activate(context: vscode.ExtensionContext) {
     });
     context.subscriptions.push(bpDecoration);
 
-    // Restore persisted direct breakpoints (survive session restart / extension reload)
+    // Load persisted direct breakpoints into bpAddresses
     for (const addr of context.workspaceState.get<number[]>(BP_DIRECT_KEY, [])) {
         bpAddresses.add(addr);
     }
+    // Mirror them in VS Code's Breakpoints panel (display only; workspaceState is the source of truth)
+    syncBreakpointsToVscode();
+
+    // Sync bpAddresses when the user removes breakpoints directly from the panel
+    context.subscriptions.push(
+        vscode.debug.onDidChangeBreakpoints(evt => {
+            let changed = false;
+            for (const bp of evt.removed) {
+                if (!(bp instanceof vscode.FunctionBreakpoint)) { continue; }
+                const addr = parseHexAddr(bp.functionName);
+                if (addr === undefined) { continue; }
+                if (bpAddresses.delete(addr)) {
+                    context.workspaceState.update(BP_DIRECT_KEY, [...bpAddresses]);
+                    changed = true;
+                    const session = vscode.debug.activeDebugSession;
+                    if (session) {
+                        Promise.resolve(session.customRequest("z80bp", { address: addr, enable: false })).catch(() => {});
+                    }
+                }
+            }
+            if (changed) { refreshZ80BpDecorations(); }
+        })
+    );
 
     pcDecoration = vscode.window.createTextEditorDecorationType({
         isWholeLine: true,
@@ -166,7 +224,8 @@ export function activate(context: vscode.ExtensionContext) {
                             z80Out.appendLine(`← evt  ${message.event} ${JSON.stringify(message.body)}`);
                         }
                         if (message.type === "response" && message.command === "configurationDone" && message.success) {
-                            // Re-apply persisted direct breakpoints to the new session
+                            // Belt-and-suspenders: also re-apply via z80bp in case setFunctionBreakpointsRequest
+                            // wasn't called (e.g. no function breakpoints registered in VS Code yet).
                             const addrs = [...bpAddresses];
                             if (addrs.length > 0) {
                                 (async () => {
@@ -281,7 +340,8 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand("z80debug.showFdcPanel",        () => FdcPanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showPpiPanel",        () => PpiPanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showTapePanel",       () => TapePanel.createOrShow()),
-        vscode.commands.registerCommand("z80debug.showScreenPanel",     () => ScreenPanel.createOrShow()),
+        vscode.commands.registerCommand("z80debug.showScreenPanel",      () => ScreenPanel.createOrShow()),
+        vscode.commands.registerCommand("z80debug.showKeyboardPanel",   () => KeyboardPanel.createOrShow()),
     );
 
     // ── Command: open disassembly at address ──────────────────────────────────
@@ -390,13 +450,55 @@ export function activate(context: vscode.ExtensionContext) {
             try {
                 const result = await session.customRequest("z80bp", { name: input.trim(), enable: true });
                 if (result?.address !== undefined) {
-                    bpAddresses.add(result.address & 0xFFFF);
-                    refreshZ80BpDecorations();
+                    const addr = result.address & 0xFFFF;
+                    bpAddresses.add(addr);
                     context.workspaceState.update(BP_DIRECT_KEY, [...bpAddresses]);
+                    if (!findFunctionBp(addr)) {
+                        vscode.debug.addBreakpoints([new vscode.FunctionBreakpoint(hexBpName(addr))]);
+                    }
+                    refreshZ80BpDecorations();
                 }
             } catch (e) {
                 vscode.window.showWarningMessage(t("cmd.addBreakpoint.failed", String(e)));
             }
+        })
+    );
+
+    // ── Command: clear all direct (z80bp) breakpoints ────────────────────────
+    context.subscriptions.push(
+        vscode.commands.registerCommand("z80debug.clearDirectBreakpoints", async () => {
+            // Collect ALL known addresses: local set + workspaceState + VS Code FunctionBreakpoints
+            const allAddrs = new Set<number>(bpAddresses);
+            for (const a of context.workspaceState.get<number[]>(BP_DIRECT_KEY, [])) { allAddrs.add(a); }
+            for (const bp of vscode.debug.breakpoints) {
+                if (bp instanceof vscode.FunctionBreakpoint) {
+                    const a = parseHexAddr(bp.functionName);
+                    if (a !== undefined) { allAddrs.add(a); }
+                }
+            }
+            if (allAddrs.size === 0) {
+                vscode.window.showInformationMessage(t("cmd.clearDirectBp.none"));
+                return;
+            }
+            const count = allAddrs.size;
+            // Disable in emulator
+            const session = vscode.debug.activeDebugSession;
+            if (session) {
+                for (const addr of allAddrs) {
+                    try { await session.customRequest("z80bp", { address: addr, enable: false }); }
+                    catch (_) {}
+                }
+            }
+            // Remove all hex FunctionBreakpoints from VS Code panel
+            const toRemove = vscode.debug.breakpoints.filter(
+                bp => bp instanceof vscode.FunctionBreakpoint && parseHexAddr((bp as vscode.FunctionBreakpoint).functionName) !== undefined
+            );
+            if (toRemove.length > 0) { vscode.debug.removeBreakpoints(toRemove); }
+            // Clear local state + persistence
+            bpAddresses.clear();
+            await context.workspaceState.update(BP_DIRECT_KEY, []);
+            refreshZ80BpDecorations();
+            vscode.window.showInformationMessage(t("cmd.clearDirectBp.done", String(count)));
         })
     );
 
@@ -420,9 +522,18 @@ export function activate(context: vscode.ExtensionContext) {
             const enable = !bpAddresses.has(addr);
             try {
                 await session.customRequest("z80bp", { address: addr, enable });
-                if (enable) bpAddresses.add(addr); else bpAddresses.delete(addr);
-                refreshZ80BpDecorations();
+                if (enable) {
+                    bpAddresses.add(addr);
+                    if (!findFunctionBp(addr)) {
+                        vscode.debug.addBreakpoints([new vscode.FunctionBreakpoint(hexBpName(addr))]);
+                    }
+                } else {
+                    bpAddresses.delete(addr);
+                    const existing = findFunctionBp(addr);
+                    if (existing) { vscode.debug.removeBreakpoints([existing]); }
+                }
                 context.workspaceState.update(BP_DIRECT_KEY, [...bpAddresses]);
+                refreshZ80BpDecorations();
             } catch (e) {
                 vscode.window.showWarningMessage(t("cmd.toggleBreakpoint.failed", String(e)));
             }

@@ -1522,6 +1522,19 @@ protected async customRequest(
         } catch (e) {
             this.sendErrorResponse(response, 1248, `insertDisk failed: ${e}`);
         }
+    } else if (command === "keyboard") {
+        try {
+            const result = await this.emulator.send({
+                cmd: "sendKey",
+                line: args?.line ?? -1,
+                bit:  args?.bit  ?? -1,
+                pressed: args?.pressed ?? false
+            });
+            response.body = result?.error ? { error: result.error } : { status: "ok" };
+            this.sendResponse(response);
+        } catch (e) {
+            this.sendErrorResponse(response, 1260, `keyboard failed: ${e}`);
+        }
     } else {
         this.sendErrorResponse(response, 1014, `Unknown custom request: ${command}`);
     }
