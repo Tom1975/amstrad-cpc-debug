@@ -14,6 +14,7 @@ export class ScreenPanel extends HardwarePanel {
     static currentPanel: ScreenPanel | undefined;
     private _lastWidth = 0;
     private _lastHeight = 0;
+    private _hasFrame = false;
 
     static createOrShow(): void {
         const column = vscode.window.activeTextEditor
@@ -105,23 +106,25 @@ export class ScreenPanel extends HardwarePanel {
         if (!body?.data) return;
         if (body.width)  this._lastWidth  = body.width;
         if (body.height) this._lastHeight = body.height;
+        this._hasFrame = true;
         this._panel.webview.postMessage({ type: "frame", format: body.format, width: body.width, height: body.height, data: body.data });
     }
 
     async refresh(): Promise<void> {
         const session = vscode.debug.activeDebugSession;
         if (!session) {
-            this._panel.webview.postMessage({ type: "error", message: "No active debug session" });
+            if (!this._hasFrame) this._panel.webview.postMessage({ type: "clear" });
             return;
         }
         try {
             const screen = await session.customRequest("getScreen", {});
             if (screen?.error) {
-                this._panel.webview.postMessage({ type: "error", message: screen.error });
+                this._panel.webview.postMessage({ type: "clear" });
                 return;
             }
             if (screen.width)  this._lastWidth  = screen.width;
             if (screen.height) this._lastHeight = screen.height;
+            this._hasFrame = true;
             this._panel.webview.postMessage({
                 type: "frame",
                 format: screen.format,
@@ -131,8 +134,8 @@ export class ScreenPanel extends HardwarePanel {
             });
 
             await this._updateCursor();
-        } catch (e) {
-            this._panel.webview.postMessage({ type: "error", message: String(e) });
+        } catch {
+            this._panel.webview.postMessage({ type: "clear" });
         }
     }
 
@@ -146,7 +149,7 @@ export class ScreenPanel extends HardwarePanel {
 ${HardwarePanel.commonCss()}
   #screenWrap {
     position: relative;
-    display: inline-block;
+    display: none;
     margin-top: 4px;
     background: #000;
     border: 1px solid var(--border);
@@ -223,7 +226,16 @@ function hex4(v) { return (v & 0xFFFF).toString(16).toUpperCase().padStart(4, '0
 
 function applyFrame(msg) {
     document.getElementById('errorMsg').style.display = 'none';
+    document.getElementById('screenWrap').style.display = 'inline-block';
     img.src = 'data:image/' + (msg.format || 'png') + ';base64,' + msg.data;
+}
+
+function clearScreen() {
+    document.getElementById('screenWrap').style.display = 'none';
+    document.getElementById('errorMsg').style.display = 'none';
+    img.src = '';
+    dot.style.display = 'none';
+    cursorInfo.innerHTML = '';
 }
 
 function applyCursor(msg) {
@@ -276,6 +288,9 @@ window.addEventListener('message', e => {
             break;
         case 'cursor':
             applyCursor(msg);
+            break;
+        case 'clear':
+            clearScreen();
             break;
         case 'error':
             document.getElementById('errorMsg').textContent = 'Error: ' + msg.message;

@@ -604,6 +604,10 @@ export function activate(context: vscode.ExtensionContext) {
                         : [nodePath.join(wsPath, entryPoint), "-o", rasmOut, "-eo", "-rasm", "-sq"];
                     config._rasmCmd = `${rasmBin} ${rasmArgs.join(" ")}`;
 
+                    // Workspace setting acts as default; launch.json true overrides it
+                    if (!config.hideEmulator)
+                        config.hideEmulator = z80cfg.get<boolean>("hideEmulator", false);
+
                     if (resolved) {
                         // Only fill fields not already set by launch.json / quickLaunch
                         if (!config.configuration && resolved.configuration)
@@ -893,7 +897,6 @@ function launchJson(): string {
                 name: t("launch.debugName"),
                 emulator: "${config:z80debug.sugarbox}",
                 sourceFile: "${workspaceFolder}/${config:z80debug.entryPoint}",
-                hideEmulator: false,
                 preLaunchTask: "RASM: assemble"
                 // Media, configuration, symbolFile and port are read from cpc.json
             },
