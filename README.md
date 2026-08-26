@@ -297,6 +297,78 @@ The extension works with any emulator that implements the TCP JSON protocol desc
 
 ---
 
+## Conformance tests
+
+The file [`test_conformance.py`](test_conformance.py) is a self-contained protocol test suite that validates any emulator implementing the Amstrad CPC Debug Protocol — not just SugarboxV2.
+
+### Standalone mode — against a running emulator
+
+No pip package required (uses only the Python standard library).
+
+```bash
+# Start your emulator with the debug server on port 1234, then:
+python3 test_conformance.py --host 127.0.0.1 --port 1234
+```
+
+Exit code `0` = all tests passed, `1` = one or more failures.
+
+### pytest mode — automated CI
+
+The test file uses a `client` fixture that depends on a session-scoped `emulator` fixture.  You must provide that fixture in a `conftest.py` next to where you run pytest.
+
+SugarboxV2 ships such a `conftest.py` in `Sugarbox/debugers/` — it starts the emulator binary automatically:
+
+```bash
+pip install pytest
+cd Sugarbox/debugers
+pytest z80-debug-adapter/test_conformance.py -v --tb=short
+```
+
+Environment variables for the SugarboxV2 conftest:
+
+| Variable | Default | Description |
+|---|---|---|
+| `SUGARBOX_BINARY` | `../../build/Sugarbox/Sugarbox` | Path to the emulator binary |
+| `SUGARBOX_PORT` | `1234` | TCP port of the debug server |
+
+#### Using with another emulator
+
+Create a `conftest.py` that exposes an `emulator` session fixture:
+
+```python
+import socket, pytest
+
+@pytest.fixture(scope="session")
+def emulator():
+    # Start your emulator here, then:
+    sock = socket.create_connection(("127.0.0.1", 1234))
+    reader = sock.makefile("r")
+    yield sock, reader
+    reader.close(); sock.close()
+    # Stop your emulator here
+```
+
+Then run:
+
+```bash
+pytest /path/to/z80-debug-adapter/test_conformance.py -v
+```
+
+### What is tested
+
+| Group | Commands |
+|---|---|
+| Protocol basics | unknown command → `error` field |
+| Emulator state | `halt`, `continue`, `reset`, `getState`, `subscribeScreen` |
+| Registers | `readRegisters`, `setRegisters`, `setPC`, `evaluate` |
+| Memory | `readMemory`, `writeMemory`, `getMemBanks` |
+| Execution | `step`, `stepIn`, `stepOut`, `setBreakpoints` + hit |
+| Disassemble | `disassemble` — count, structure, ordered addresses |
+| Hardware state | `getCrtcState`, `getGateArrayState`, `getPsgState`, `getPpiState`, `getFdcState`, `getTapeState` |
+| Keyboard | `sendKey` — valid press/release, invalid line/bit → `error` |
+
+---
+
 ## Known limitations
 
 - Breakpoints on real `.asm` source files are not supported (only on virtual disassembly and via labels).

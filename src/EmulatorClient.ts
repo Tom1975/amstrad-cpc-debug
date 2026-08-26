@@ -35,7 +35,7 @@ export class EmulatorClient {
             this.socket = net.createConnection(port, host, () => { resolve(); });
             this.socket.on("data",  data => this.onData(data));
             this.socket.on("error", err  => { reject(err); });
-            this.socket.on("close", ()   => console.log(`EmulatorClient: socket closed (port ${port})`));
+            this.socket.on("close", () => {});
         });
     }
 

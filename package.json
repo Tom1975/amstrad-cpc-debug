@@ -4,7 +4,9 @@
   "description": "VS Code debugger for Amstrad CPC Z80 development — connects to any emulator implementing the amstrad-cpc-debug TCP protocol",
   "version": "0.0.3",
   "publisher": "thomas-guillemin",
-  "extensionKind": ["workspace"],
+  "extensionKind": [
+    "workspace"
+  ],
   "engines": {
     "vscode": "^1.108.0"
   },
@@ -22,18 +24,32 @@
         "viewType": "z80debug.hexEditor",
         "displayName": "CPC Hex Viewer",
         "selector": [
-          { "filenamePattern": "*.cpr" },
-          { "filenamePattern": "*.bin" },
-          { "filenamePattern": "*.sna" },
-          { "filenamePattern": "*.dsk" },
-          { "filenamePattern": "*.cdt" }
+          {
+            "filenamePattern": "*.cpr"
+          },
+          {
+            "filenamePattern": "*.bin"
+          },
+          {
+            "filenamePattern": "*.sna"
+          },
+          {
+            "filenamePattern": "*.dsk"
+          },
+          {
+            "filenamePattern": "*.cdt"
+          }
         ],
         "priority": "default"
       }
     ],
     "breakpoints": [
-      { "language": "asm" },
-      { "language": "z80-disasm" }
+      {
+        "language": "asm"
+      },
+      {
+        "language": "z80-disasm"
+      }
     ],
     "configurationDefaults": {
       "[z80-disasm]": {
@@ -77,7 +93,12 @@
         "z80debug.keyboardLayout": {
           "type": "string",
           "default": "EN",
-          "enum": ["EN", "FR", "DE", "ES"],
+          "enum": [
+            "EN",
+            "FR",
+            "DE",
+            "ES"
+          ],
           "enumDescriptions": [
             "English QWERTY",
             "French AZERTY",
@@ -91,8 +112,15 @@
     "languages": [
       {
         "id": "asm",
-        "aliases": ["Assembly", "ASM", "asm"],
-        "extensions": [".asm", ".s"]
+        "aliases": [
+          "Assembly",
+          "ASM",
+          "asm"
+        ],
+        "extensions": [
+          ".asm",
+          ".s"
+        ]
       },
       {
         "id": "z80-disasm",
@@ -534,12 +562,16 @@
     "compile": "tsc -p .",
     "bundle": "npm run compile && webpack --config webpack.config.js",
     "watch": "tsc -w",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "jest --forceExit"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.19.30",
     "@types/vscode": "^1.108.1",
     "@vscode/vsce": "^2.15.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
     "typescript": "^5.3.0",
     "webpack": "^5.106.2",
     "webpack-cli": "^7.0.2"
