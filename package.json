@@ -15,7 +15,8 @@
   ],
   "activationEvents": [
     "onDebug",
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCustomEditor:z80debug.hexEditor"
   ],
   "main": "./dist/main.js",
   "contributes": {
