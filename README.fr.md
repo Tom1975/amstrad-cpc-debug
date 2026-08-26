@@ -258,7 +258,7 @@ game_over:               ; label du fichier .rasm
 0x5A07  HALT             ; 76
 ```
 
-> Poser des breakpoints directement sur les lignes `.asm` dans l'éditeur n'est pas encore supporté — utilisez les breakpoints sur le désassemblage (F9) ou les label breakpoints.
+Les breakpoints peuvent être posés directement sur les lignes source `.asm` en cliquant dans la marge de VS Code, comme dans n'importe quel autre langage. Ils sont résolus en adresse via le fichier symboles et appliqués à l'émulateur.
 
 ![Désassemblage avec source intercalé](docs/screenshots/disassembly_with_source.png)
 
@@ -486,11 +486,13 @@ Machine Z80 / hardware
 ```
 
 En mode `launch`, l'adapter :
-1. Génère un script CSL temporaire si un média est fourni
-2. Lance l'émulateur : `<emulator> --debug --debug_server <port> [--csl <file>] [--cfg <name>] [--hide]`
-3. Attend l'ouverture du port TCP (retry 250 ms, timeout 10 s)
-4. Se connecte, envoie `loadSnapshot` si un `.sna` est spécifié
-5. Envoie `InitializedEvent` → VS Code envoie `configurationDone` → l'émulateur s'arrête sur l'entrée
+1. Lance l'émulateur : `<emulator> --debug --debug_server <port> [--cfg <name>] [--hide]`
+2. Attend l'ouverture du port TCP (retry 250 ms, timeout 10 s)
+3. Se connecte via TCP, puis via le protocole debug :
+   - envoie `insertDisk` pour le lecteur A et/ou B si spécifié
+   - envoie `insertTape` si une cassette est spécifiée
+   - envoie `loadSnapshot` si un `.sna` est spécifié
+4. Envoie `InitializedEvent` → VS Code envoie `configurationDone` → l'émulateur s'arrête sur l'entrée
 
 ---
 
@@ -574,6 +576,4 @@ pytest /chemin/vers/z80-debug-adapter/test_conformance.py -v
 
 ## Limitations connues
 
-- Les breakpoints posés directement sur les lignes source `.asm` ne sont pas encore supportés — utilisez les breakpoints sur le désassemblage (F9) ou les label breakpoints.
-- Un seul thread Z80 est exposé (pas de breakpoints DMA ASIC/CPC+ multi-canal).
 - Timeout de réponse de l'émulateur : 10 s par commande.

@@ -18,7 +18,6 @@ import { Scope } from 'vscode-debugadapter';
 import { Variable } from 'vscode-debugadapter';
 import * as cp from "child_process";
 import * as fs from "fs";
-import * as os from "os";
 import * as nodePath from "path";
 import * as net from "net";
 
@@ -255,24 +254,8 @@ protected async launchRequest(
         return;
     }
 
-    // Disks are inserted via DAP command after connect (better error reporting).
-    // Tape still uses CSL (no DAP command for tape insertion).
-    let cslFile: string | null = null;
-    if (args.tape) {
-        const lines = ["csl_version 2.0", `tape_insert '${args.tape}'`];
-        cslFile = nodePath.join(os.tmpdir(), `sugarbox_${Date.now()}.csl`);
-        const cslContent = lines.join("\n") + "\n";
-        fs.writeFileSync(cslFile, cslContent);
-        console.log("DAP: CSL script written to", cslFile);
-        this.sendEvent(new OutputEvent(
-            `[Z80 Debug] CSL (tape) → ${cslFile}\n${cslContent.split("\n").filter(Boolean).map(l => "  " + l).join("\n")}\n`,
-            "console"
-        ));
-    }
-
     // Build Sugarbox arguments
     const spawnArgs: string[] = ["--debug", "--debug_server", String(port)];
-    if (cslFile)              spawnArgs.push("--csl", cslFile);
     if (args.cartridge)       spawnArgs.push("--cart", args.cartridge);
     if (args.configuration)   spawnArgs.push("--cfg", args.configuration);
     if (args.hideEmulator)    spawnArgs.push("--hide");
@@ -384,7 +367,7 @@ protected async launchRequest(
     console.log("DAP: Connected to emulator");
     this.sendEvent(new OutputEvent(`[Z80 Debug] Connected to emulator on port ${port}\n`, "console"));
 
-    // Insert disks via DAP — gives explicit error reporting unlike the CSL approach.
+    // Insert disks via DAP.
     for (const [drive, path] of [[0, args.disk], [1, args.diskB]] as [number, string | undefined][]) {
         if (!path) continue;
         this.sendEvent(new OutputEvent(`[Z80 Debug] Inserting disk ${drive}: ${path}\n`, "console"));
@@ -401,6 +384,26 @@ protected async launchRequest(
                 }
             } catch (e: any) {
                 this.sendEvent(new OutputEvent(`[Z80 Debug] insertDisk timed out: ${e.message}\n`, "stderr"));
+            }
+        }
+    }
+
+    // Insert tape via DAP.
+    if (args.tape) {
+        this.sendEvent(new OutputEvent(`[Z80 Debug] Inserting tape: ${args.tape}\n`, "console"));
+        if (!fs.existsSync(args.tape)) {
+            this.sendEvent(new OutputEvent(`[Z80 Debug] WARNING: tape file not found: ${args.tape}\n`, "stderr"));
+        } else {
+            try {
+                const r = await this.emulator.send({ cmd: "insertTape", path: args.tape });
+                if (r?.status === "ok") {
+                    this.sendEvent(new OutputEvent(`[Z80 Debug] Tape inserted OK\n`, "console"));
+                } else {
+                    this.sendEvent(new OutputEvent(
+                        `[Z80 Debug] WARNING: insertTape failed: ${JSON.stringify(r)}\n`, "stderr"));
+                }
+            } catch (e: any) {
+                this.sendEvent(new OutputEvent(`[Z80 Debug] insertTape timed out: ${e.message}\n`, "stderr"));
             }
         }
     }

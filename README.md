@@ -258,7 +258,7 @@ game_over:               ; label from .rasm file
 0x5A07  HALT             ; 76
 ```
 
-> Setting breakpoints directly on `.asm` lines in the editor is not yet supported — set them in the disassembly view (F9) or via label breakpoints.
+Breakpoints can be set directly on `.asm` source lines by clicking the gutter in VS Code, just like in any other language. They are resolved to the corresponding address via the symbol file and applied to the emulator.
 
 ![Disassembly with source interleaved](docs/screenshots/disassembly_with_source.png)
 
@@ -487,11 +487,13 @@ Z80 CPU / hardware
 ```
 
 In `launch` mode, the adapter:
-1. Writes a temporary CSL script if media is provided
-2. Spawns the emulator: `<emulator> --debug --debug_server <port> [--csl <file>] [--cfg <name>] [--hide]`
-3. Polls the TCP port until it opens (retry every 250 ms, 10 s timeout)
-4. Connects, sends `loadSnapshot` if a `.sna` is specified
-5. Sends `InitializedEvent` → VS Code sends `configurationDone` → emulator breaks on entry
+1. Spawns the emulator: `<emulator> --debug --debug_server <port> [--cfg <name>] [--hide]`
+2. Polls the TCP port until it opens (retry every 250 ms, 10 s timeout)
+3. Connects via TCP, then over the debug protocol:
+   - sends `insertDisk` for drive A and/or B if specified
+   - sends `insertTape` if a tape is specified
+   - sends `loadSnapshot` if a `.sna` is specified
+4. Sends `InitializedEvent` → VS Code sends `configurationDone` → emulator breaks on entry
 
 ---
 
@@ -575,6 +577,4 @@ pytest /path/to/z80-debug-adapter/test_conformance.py -v
 
 ## Known limitations
 
-- Breakpoints set directly on `.asm` source lines are not yet supported — use disassembly breakpoints (F9) or label breakpoints instead.
-- A single Z80 thread is exposed (no multi-core CPC+/ASIC DMA breakpoints).
 - Emulator response timeout: 10 s per command.
