@@ -17,6 +17,7 @@ import { ConfigPanel } from "./ConfigPanel";
 import { ProjectPanel } from "./ProjectPanel";
 import { CpcConfig } from "./CpcConfig";
 import { initI18n, t } from "./i18n";
+import { HexEditorProvider } from "./HexEditorProvider";
 
 // ─── Disassembly virtual document provider ────────────────────────────────────
 
@@ -322,6 +323,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── Register disassembly content provider ─────────────────────────────────
     const disasmProvider = new Z80DisasmProvider();
+    context.subscriptions.push(HexEditorProvider.register(context));
+
     context.subscriptions.push(
         vscode.workspace.registerTextDocumentContentProvider("z80disasm", disasmProvider)
     );

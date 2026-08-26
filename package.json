@@ -17,6 +17,20 @@
   ],
   "main": "./dist/main.js",
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "z80debug.hexEditor",
+        "displayName": "CPC Hex Viewer",
+        "selector": [
+          { "filenamePattern": "*.cpr" },
+          { "filenamePattern": "*.bin" },
+          { "filenamePattern": "*.sna" },
+          { "filenamePattern": "*.dsk" },
+          { "filenamePattern": "*.cdt" }
+        ],
+        "priority": "default"
+      }
+    ],
     "breakpoints": [
       { "language": "asm" },
       { "language": "z80-disasm" }
