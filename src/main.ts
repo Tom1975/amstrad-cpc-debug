@@ -18,6 +18,7 @@ import { ProjectPanel } from "./ProjectPanel";
 import { CpcConfig } from "./CpcConfig";
 import { initI18n, t } from "./i18n";
 import { HexEditorProvider } from "./HexEditorProvider";
+import { MemoryVideoPanel } from "./MemoryVideoPanel";
 
 // ─── Disassembly virtual document provider ────────────────────────────────────
 
@@ -345,6 +346,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand("z80debug.showTapePanel",       () => TapePanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showScreenPanel",      () => ScreenPanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showKeyboardPanel",   () => KeyboardPanel.createOrShow()),
+        vscode.commands.registerCommand("z80debug.showMemoryVideoPanel", () => MemoryVideoPanel.createOrShow()),
     );
 
     // ── Command: open disassembly at address ──────────────────────────────────

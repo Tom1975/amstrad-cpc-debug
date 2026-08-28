@@ -15,6 +15,7 @@
     "cmd.showTapePanel":      "Afficher le panneau Cassette",
     "cmd.showScreenPanel":    "Afficher l'écran du CPC",
     "cmd.showKeyboardPanel":        "Afficher le clavier virtuel CPC",
+    "cmd.showMemoryVideoPanel":     "Afficher la vue mémoire vidéo",
     "cmd.clearDirectBreakpoints":   "Effacer tous les breakpoints d'adresse (z80bp)",
     "cmd.clearDirectBp.none":       "Aucun breakpoint d'adresse à effacer.",
     "cmd.clearDirectBp.done":       "{0} breakpoint(s) d'adresse effacé(s).",

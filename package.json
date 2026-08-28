@@ -230,6 +230,11 @@
         "category": "Z80 Debug"
       },
       {
+        "command": "z80debug.showMemoryVideoPanel",
+        "title": "%cmd.showMemoryVideoPanel%",
+        "category": "Z80 Debug"
+      },
+      {
         "command": "z80debug.clearDirectBreakpoints",
         "title": "%cmd.clearDirectBreakpoints%",
         "category": "Z80 Debug"

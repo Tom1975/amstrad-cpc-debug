@@ -15,6 +15,7 @@
     "cmd.showTapePanel":      "Show Cassette Panel",
     "cmd.showScreenPanel":    "Show CPC Screen Panel",
     "cmd.showKeyboardPanel":        "Show CPC Virtual Keyboard",
+    "cmd.showMemoryVideoPanel":     "Show Memory Video View",
     "cmd.clearDirectBreakpoints":   "Clear all address breakpoints (z80bp)",
     "cmd.clearDirectBp.none":       "No address breakpoints to clear.",
     "cmd.clearDirectBp.done":       "Cleared {0} address breakpoint(s).",

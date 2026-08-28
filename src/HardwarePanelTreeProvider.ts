@@ -14,7 +14,8 @@ const PANELS: PanelEntry[] = [
     { label: "FDC (µPD765)",    command: "z80debug.showFdcPanel",      ready: true  },
     { label: "PPI (8255)",       command: "z80debug.showPpiPanel",      ready: true  },
     { label: "Cassette",         command: "z80debug.showTapePanel",     ready: true  },
-    { label: "Clavier virtuel",  command: "z80debug.showKeyboardPanel", ready: true  },
+    { label: "Clavier virtuel",  command: "z80debug.showKeyboardPanel",    ready: true  },
+    { label: "Mémoire vidéo",   command: "z80debug.showMemoryVideoPanel", ready: true  },
 ];
 
 export class HardwarePanelItem extends vscode.TreeItem {
