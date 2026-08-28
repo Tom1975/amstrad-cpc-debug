@@ -366,7 +366,13 @@ class TestExecution:
         client.wait_stopped()
 
     def test_stepOut_returns_ok(self, client):
+        # stepOut runs until the current call frame returns — needs a predictable RET.
+        # Write CALL 0x9010 at 0x9000 and RET at 0x9010, then CALL into the subroutine.
         client.halt(); client.wait_stopped()
+        client.cmd("writeMemory", address=0x9000, bytes=[0xCD, 0x10, 0x90])  # CALL 0x9010
+        client.cmd("writeMemory", address=0x9010, bytes=[0xC9])              # RET
+        client.cmd("setPC", address=0x9000)
+        client.cmd("step"); client.wait_stopped()  # execute CALL → now inside subroutine
         resp = client.cmd("stepOut")
         _check_status_ok(resp)
         client.wait_stopped(timeout=5.0)
