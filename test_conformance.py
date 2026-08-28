@@ -141,14 +141,28 @@ def _check_status_ok(resp: dict) -> None:
 
 @pytest.fixture(scope="module")
 def client(emulator):
-    """Wrap the session-scoped (host, port) into a DebugClient for conformance tests."""
-    sock, _reader = emulator
-    host, port = sock.getpeername()
+    """Create a DebugClient for conformance tests, reusing the emulator's connection slot.
+
+    The server handles one TCP connection at a time.  We close the session-scoped
+    socket before opening ours, then restore it afterwards so the session teardown
+    can shut down the process cleanly.
+    """
+    # Save peer address before closing.
+    host, port = emulator[0].getpeername()
+    # Release the shared socket so the server is free to accept our new connection.
+    emulator[1].close()
+    emulator[0].close()
+
     c = DebugClient(host, port)
     c.halt()
     c.wait_stopped()
     yield c
     c.close()
+
+    # Restore a shared connection for session teardown (process shutdown).
+    new_sock = socket.create_connection((host, port), timeout=10)
+    emulator[0] = new_sock
+    emulator[1] = new_sock.makefile("r")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
