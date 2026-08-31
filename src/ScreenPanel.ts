@@ -147,40 +147,46 @@ export class ScreenPanel extends HardwarePanel {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
 <style>
 ${HardwarePanel.commonCss()}
-  #screenWrap {
-    position: relative;
+  /* Outer: fixed-width scroll container */
+  #screenOuter {
     display: none;
     margin-top: 4px;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
     background: #000;
     border: 1px solid var(--border);
   }
-  #screenImg {
+  /* Inner: inline-block so it sizes to the image */
+  #screenWrap {
+    position: relative;
+    display: inline-block;
+  }
+  #screenCanvas {
     display: block;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
-    max-width: 100%;
   }
-  #cursorDot {
+  #cursorH, #cursorV {
     position: absolute;
-    width: 8px;
-    height: 8px;
-    margin-left: -4px;
-    margin-top: -4px;
-    border-radius: 50%;
-    background: #ff3b30;
-    box-shadow: 0 0 0 1px #fff, 0 0 4px 1px rgba(255,59,48,0.9);
     pointer-events: none;
     display: none;
+    background: rgba(255, 59, 48, 0.85);
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
   }
-  /* Beam is currently in the border/blanking area (outside the visible
-     window): shown as a hollow ring clamped to the nearest edge instead
-     of a filled dot, so it stays visible rather than disappearing. */
-  #cursorDot.offscreen {
-    background: transparent;
-    border: 2px solid #ff3b30;
-    box-shadow: 0 0 0 1px #fff;
-    width: 6px;
-    height: 6px;
+  #cursorH {
+    left: 0; right: 0;
+    height: 1px;
+    margin-top: 0;
+  }
+  #cursorV {
+    top: 0; bottom: 0;
+    width: 1px;
+    margin-left: 0;
+  }
+  /* Beam outside the visible window: shown faded, clamped to the edge. */
+  #cursorH.offscreen, #cursorV.offscreen {
+    background: rgba(255, 59, 48, 0.35);
   }
   #cursorInfo {
     display: grid;
@@ -204,13 +210,19 @@ ${HardwarePanel.commonCss()}
 
 <div class="toolbar">
   <span id="badge" class="badge">CPC Screen</span>
+  <button id="btnZoomOut" title="Zoom arrière (molette ↓)">&#x2212;</button>
+  <span id="lblZoom" style="min-width:2.5em;text-align:center;font-variant-numeric:tabular-nums">1×</span>
+  <button id="btnZoomIn" title="Zoom avant (molette ↑)">&#x2B;</button>
   <button id="btnRefresh">&#x21BA; Refresh</button>
 </div>
 <div id="errorMsg" class="error"></div>
 
-<div id="screenWrap">
-  <img id="screenImg" alt="CPC screen">
-  <div id="cursorDot"></div>
+<div id="screenOuter">
+  <div id="screenWrap">
+    <canvas id="screenCanvas"></canvas>
+    <div id="cursorH"></div>
+    <div id="cursorV"></div>
+  </div>
 </div>
 
 <div class="section-title">Cursor (CRTC beam)</div>
@@ -218,37 +230,72 @@ ${HardwarePanel.commonCss()}
 
 <script>
 const vscode = acquireVsCodeApi();
-const img = document.getElementById('screenImg');
-const dot = document.getElementById('cursorDot');
+const canvas  = document.getElementById('screenCanvas');
+const ctx     = canvas.getContext('2d');
+const cursorH = document.getElementById('cursorH');
+const cursorV = document.getElementById('cursorV');
 const cursorInfo = document.getElementById('cursorInfo');
+
+const ZOOM_STEPS = [0.5, 1, 2, 3, 4];
+let zoomIdx = 1;         // 1× par défaut
+let currentImg = null;   // Image décodée en mémoire
+let lastCursorMsg = null;
+
+function redraw() {
+    if (!currentImg) return;
+    const z = ZOOM_STEPS[zoomIdx];
+    canvas.width  = Math.round(currentImg.naturalWidth  * z);
+    canvas.height = Math.round(currentImg.naturalHeight * z);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(currentImg, 0, 0, canvas.width, canvas.height);
+}
+
+function applyZoom() {
+    redraw();
+    const z = ZOOM_STEPS[zoomIdx];
+    document.getElementById('lblZoom').textContent = (z === Math.floor(z) ? z : z.toFixed(1)) + '×';
+    document.getElementById('btnZoomOut').disabled = zoomIdx <= 0;
+    document.getElementById('btnZoomIn').disabled  = zoomIdx >= ZOOM_STEPS.length - 1;
+    if (lastCursorMsg) applyCursor(lastCursorMsg);
+}
+
+function zoomIn()  { if (zoomIdx < ZOOM_STEPS.length - 1) { zoomIdx++; applyZoom(); } }
+function zoomOut() { if (zoomIdx > 0)                     { zoomIdx--; applyZoom(); } }
 
 function hex4(v) { return (v & 0xFFFF).toString(16).toUpperCase().padStart(4, '0'); }
 
 function applyFrame(msg) {
     document.getElementById('errorMsg').style.display = 'none';
-    document.getElementById('screenWrap').style.display = 'inline-block';
-    img.src = 'data:image/' + (msg.format || 'png') + ';base64,' + msg.data;
+    document.getElementById('screenOuter').style.display = 'block';
+    const tmpImg = new Image();
+    tmpImg.onload = () => { currentImg = tmpImg; redraw(); if (lastCursorMsg) applyCursor(lastCursorMsg); };
+    tmpImg.src = 'data:image/' + (msg.format || 'png') + ';base64,' + msg.data;
 }
 
 function clearScreen() {
-    document.getElementById('screenWrap').style.display = 'none';
+    document.getElementById('screenOuter').style.display = 'none';
     document.getElementById('errorMsg').style.display = 'none';
-    img.src = '';
-    dot.style.display = 'none';
+    currentImg = null;
+    canvas.width = 0; canvas.height = 0;
+    cursorH.style.display = 'none';
+    cursorV.style.display = 'none';
     cursorInfo.innerHTML = '';
 }
 
 function applyCursor(msg) {
+    lastCursorMsg = msg;
     if (msg.clear || msg.displayX === undefined) {
-        dot.style.display = 'none';
+        cursorH.style.display = 'none';
+        cursorV.style.display = 'none';
         cursorInfo.innerHTML = '';
         return;
     }
 
-    const imgW = msg.imgW || img.naturalWidth  || 1;
-    const imgH = msg.imgH || img.naturalHeight || 1;
-    const scaleX = (img.clientWidth  || imgW) / imgW;
-    const scaleY = (img.clientHeight || imgH) / imgH;
+    const imgW = msg.imgW || (currentImg ? currentImg.naturalWidth  : 0) || 1;
+    const imgH = msg.imgH || (currentImg ? currentImg.naturalHeight : 0) || 1;
+    // canvas.width = naturalWidth * zoom, so scaleX = zoom
+    const scaleX = canvas.width  / imgW;
+    const scaleY = canvas.height / imgH;
 
     // The beam spends most of its time outside the cropped visible window
     // (border, HSYNC/VSYNC blanking) — clamp it to the nearest edge and mark
@@ -257,10 +304,12 @@ function applyCursor(msg) {
     const clampedX = Math.max(0, Math.min(imgW  - 1, msg.displayX));
     const clampedY = Math.max(0, Math.min(imgH - 1, msg.displayY));
 
-    dot.style.left = (clampedX * scaleX) + 'px';
-    dot.style.top  = (clampedY * scaleY) + 'px';
-    dot.style.display = 'block';
-    dot.classList.toggle('offscreen', offscreen);
+    cursorV.style.left = (clampedX * scaleX) + 'px';
+    cursorH.style.top  = (clampedY * scaleY) + 'px';
+    cursorH.style.display = 'block';
+    cursorV.style.display = 'block';
+    cursorH.classList.toggle('offscreen', offscreen);
+    cursorV.classList.toggle('offscreen', offscreen);
 
     const borderSwatch = msg.border !== undefined
         ? '<span class="border-swatch" style="background:rgb(' +
@@ -302,6 +351,12 @@ window.addEventListener('message', e => {
 document.getElementById('btnRefresh').addEventListener('click', () => {
     vscode.postMessage({ type: 'refresh' });
 });
+document.getElementById('btnZoomIn').addEventListener('click',  zoomIn);
+document.getElementById('btnZoomOut').addEventListener('click', zoomOut);
+document.getElementById('screenOuter').addEventListener('wheel', e => {
+    e.preventDefault();
+    if (e.deltaY < 0) zoomIn(); else zoomOut();
+}, { passive: false });
 
 vscode.postMessage({ type: 'ready' });
 </script>
