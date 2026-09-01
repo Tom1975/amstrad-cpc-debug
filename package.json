@@ -2,7 +2,7 @@
   "name": "amstrad-cpc-debug",
   "displayName": "Amstrad CPC Debug",
   "description": "VS Code debugger for Amstrad CPC Z80 development — connects to any emulator implementing the amstrad-cpc-debug TCP protocol",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "thomas-guillemin",
   "repository": {
     "type": "git",

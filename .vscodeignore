@@ -20,7 +20,22 @@ node_modules/**
 !node_modules/vscode-debugadapter/**
 !node_modules/vscode-debugprotocol/**
 
+# Compilé TS (redondant avec dist/main.js bundlé par webpack)
+out/**
+
+# Tests
+test/**
+jest.config.js
+test_conformance.py
+
+# Scripts de dev
+make_vsix.py
+
+# CI
+.github/**
+
 # Divers
 .git/**
 .gitignore
 *.vsix
+package-lock.json
