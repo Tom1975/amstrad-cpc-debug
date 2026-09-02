@@ -19,6 +19,7 @@ import { CpcConfig } from "./CpcConfig";
 import { initI18n, t } from "./i18n";
 import { HexEditorProvider } from "./HexEditorProvider";
 import { MemoryVideoPanel } from "./MemoryVideoPanel";
+import { AsmSymbolProvider } from "./AsmSymbolProvider";
 
 // ─── Disassembly virtual document provider ────────────────────────────────────
 
@@ -319,6 +320,14 @@ export function activate(context: vscode.ExtensionContext) {
                 createDebugAdapterDescriptor: () =>
                     new vscode.DebugAdapterInlineImplementation(new Z80DebugSession())
             }
+        )
+    );
+
+    // ── ASM Outline (Document Symbol Provider) ────────────────────────────────
+    context.subscriptions.push(
+        vscode.languages.registerDocumentSymbolProvider(
+            [{ language: "asm" }, { language: "z80-disasm" }],
+            new AsmSymbolProvider()
         )
     );
 
