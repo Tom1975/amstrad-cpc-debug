@@ -501,6 +501,14 @@ In `launch` mode, the adapter:
 
 The extension works with any emulator that implements the TCP JSON protocol described in [`EMULATOR_INTERFACE.md`](EMULATOR_INTERFACE.md). Hardware panel commands (CRTC, FDC, etc.) are optional: the extension degrades gracefully if they are not supported.
 
+### Known compatible emulators
+
+| Emulator | Platform | Min. version | Notes |
+|----------|----------|:------------:|-------|
+| [SugarboxV2](https://github.com/Tom1975/SugarboxV2) | Windows · Linux · macOS | 2.1.1 | Reference implementation — full protocol support |
+
+If you implement the protocol in another emulator and want to be listed here, open a PR or an issue.
+
 ---
 
 ## Conformance tests
