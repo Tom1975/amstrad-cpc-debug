@@ -130,11 +130,16 @@ def main():
     files = collect_files()
     print(f"Packaging {len(files)} files → {vsix_name}")
 
+    pkg_for_zip = dict(pkg, version=version)
+
     with zipfile.ZipFile(vsix_name, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("[Content_Types].xml", content_types_xml())
         zf.writestr("extension.vsixmanifest", manifest_xml(pkg, version))
         for abs_path, rel_path in files:
-            zf.write(abs_path, f"extension/{rel_path}")
+            if rel_path == "package.json":
+                zf.writestr(f"extension/{rel_path}", json.dumps(pkg_for_zip, indent=2))
+            else:
+                zf.write(abs_path, f"extension/{rel_path}")
 
     size_kb = os.path.getsize(vsix_name) // 1024
     print(f"  {size_kb} KB")
