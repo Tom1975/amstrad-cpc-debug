@@ -99,6 +99,13 @@ body { padding-bottom: 16px; }
     color: var(--vscode-button-foreground);
     border-color: var(--vscode-button-background);
 }
+#dimFields { display: flex; align-items: center; gap: 4px; }
+#dimFields label { font-size: 12px; color: var(--fg-dim); }
+#dimFields input {
+    width: 4.5em; background: var(--vscode-input-background, #3c3c3c);
+    color: var(--vscode-input-foreground, #ccc); border: 1px solid var(--border);
+    border-radius: 3px; padding: 2px 4px; font-size: 12px;
+}
 #canvasOuter {
     width: 100%; overflow-x: auto; overflow-y: hidden;
     background: #000; border: 1px solid var(--border); margin-top: 6px;
@@ -152,6 +159,12 @@ body { padding-bottom: 16px; }
   <button class="mode-btn active" data-mode="0">Mode 0 (160×200)</button>
   <button class="mode-btn"        data-mode="1">Mode 1 (320×200)</button>
   <button class="mode-btn"        data-mode="2">Mode 2 (640×200)</button>
+  <div id="dimFields">
+    <label for="inColumns">Colonnes</label>
+    <input type="number" id="inColumns" min="1" max="255" value="80">
+    <label for="inLines">Lignes</label>
+    <input type="number" id="inLines" min="1" max="1024" value="200">
+  </div>
   <span style="flex:1"></span>
   <button id="btnZoomOut" title="Zoom arrière (molette ↓)">&#x2212;</button>
   <span id="lblZoom" style="min-width:2.5em;text-align:center;font-variant-numeric:tabular-nums">1×</span>
@@ -188,6 +201,8 @@ let zoomIdx = 2;
 let scrData = null;
 let currentMode = 0;
 let selectedInk = 0;
+let numCols = 80;   // octets par ligne (largeur mémoire écran)
+let numLines = 200; // lignes de balayage
 // palette[i] = hw color index (0-26)
 let palette = DEFAULT_PALETTES[0].slice();
 
@@ -212,25 +227,25 @@ function decodeMode2(b) {
     return [(b>>7)&1,(b>>6)&1,(b>>5)&1,(b>>4)&1,(b>>3)&1,(b>>2)&1,(b>>1)&1,b&1];
 }
 
-// SCR memory layout: offset for screen line y (0-199), byte column x (0-79)
-function scrOffset(x, y) { return (y & 7) * 0x800 + (y >> 3) * 80 + x; }
+// SCR memory layout: offset for screen line y, byte column x (0-based, numCols wide)
+function scrOffset(x, y) { return (y & 7) * 0x800 + (y >> 3) * numCols + x; }
 
 function render() {
     if (!scrData) return;
 
-    // Mode 0: 2 CPC pixels/byte × 2 canvas px/CPC px = 4 canvas px/byte → 320 wide
-    // Mode 1: 4 CPC pixels/byte × 1 canvas px       = 4 canvas px/byte → 320 wide
-    // Mode 2: 8 CPC pixels/byte × 1 canvas px       = 8 canvas px/byte → 640 wide
-    const canvasW = currentMode === 2 ? 640 : 320;
-    const canvasH = 200;
+    // Mode 0: 2 CPC pixels/byte × 2 canvas px/CPC px = 4 canvas px/byte
+    // Mode 1: 4 CPC pixels/byte × 1 canvas px        = 4 canvas px/byte
+    // Mode 2: 8 CPC pixels/byte × 1 canvas px         = 8 canvas px/byte
+    const canvasW = numCols * (currentMode === 2 ? 8 : 4);
+    const canvasH = numLines;
     canvas.width  = canvasW;
     canvas.height = canvasH;
 
     const imgData = ctx.createImageData(canvasW, canvasH);
     const px = imgData.data;
 
-    for (let y = 0; y < 200; y++) {
-        for (let xb = 0; xb < 80; xb++) {
+    for (let y = 0; y < numLines; y++) {
+        for (let xb = 0; xb < numCols; xb++) {
             const off = scrOffset(xb, y);
             if (off >= scrData.length) continue;
             const b = scrData[off];
@@ -341,6 +356,25 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
         updateSelectedLabel();
         render();
     });
+});
+
+// ── Dimensions (colonnes/lignes) ────────────────────────────────────────────────
+function clampDim(value, min, max, fallback) {
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+}
+const inColumns = document.getElementById('inColumns');
+const inLines   = document.getElementById('inLines');
+inColumns.addEventListener('change', () => {
+    numCols = clampDim(inColumns.value, 1, 255, numCols);
+    inColumns.value = numCols;
+    render();
+});
+inLines.addEventListener('change', () => {
+    numLines = clampDim(inLines.value, 1, 1024, numLines);
+    inLines.value = numLines;
+    render();
 });
 
 // ── Presets ───────────────────────────────────────────────────────────────────
