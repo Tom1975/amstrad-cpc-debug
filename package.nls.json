@@ -23,6 +23,8 @@
 
     "view.launcher": "Amstrad CPC",
     "view.hardware": "CPC Hardware",
+    "view.resources": "CPC Resources",
+    "cmd.refreshResources": "Refresh CPC Resources",
     "view.launcher.welcome": "[$(add) New CPC Project...](command:z80debug.newProject)\n[$(run) Launch CPC...](command:z80debug.quickLaunch)\n[$(settings-gear) CPC Project Config...](command:z80debug.configureProject)\n[$(tools) Configure](command:z80debug.configure)",
 
     "dbg.label": "Z80 Emulator",

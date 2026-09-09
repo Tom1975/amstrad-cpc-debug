@@ -1525,6 +1525,32 @@ protected async customRequest(
         } catch (e) {
             this.sendErrorResponse(response, 1248, `insertDisk failed: ${e}`);
         }
+    } else if (command === "getEmulatorSettings") {
+        await this._forwardHardwareRequest(response, "getEmulatorSettings", 1270);
+    } else if (command === "getEmulatorSetting") {
+        try {
+            const result = await this.emulator.send({ cmd: "getEmulatorSetting", ...args });
+            response.body = result?.error ? { error: result.error } : result;
+            this.sendResponse(response);
+        } catch (e) {
+            this.sendErrorResponse(response, 1271, `getEmulatorSetting failed: ${e}`);
+        }
+    } else if (command === "setEmulatorSetting") {
+        try {
+            const result = await this.emulator.send({ cmd: "setEmulatorSetting", ...args });
+            response.body = result?.error ? { error: result.error } : result;
+            this.sendResponse(response);
+        } catch (e) {
+            this.sendErrorResponse(response, 1272, `setEmulatorSetting failed: ${e}`);
+        }
+    } else if (command === "setEmulatorSettings") {
+        try {
+            const result = await this.emulator.send({ cmd: "setEmulatorSettings", settings: args.settings });
+            response.body = result?.error ? { error: result.error } : result;
+            this.sendResponse(response);
+        } catch (e) {
+            this.sendErrorResponse(response, 1273, `setEmulatorSettings failed: ${e}`);
+        }
     } else if (command === "keyboard") {
         try {
             const result = await this.emulator.send({

@@ -18,6 +18,12 @@ import { ProjectPanel } from "./ProjectPanel";
 import { CpcConfig } from "./CpcConfig";
 import { initI18n, t } from "./i18n";
 import { HexEditorProvider } from "./HexEditorProvider";
+import { ScrEditorProvider } from "./ScrEditorProvider";
+import { ResourceIndex } from "./ResourceIndex";
+import { ResourceTreeProvider } from "./ResourceTreeProvider";
+import { AsmLinkProvider } from "./AsmLinkProvider";
+import { AsmHoverProvider } from "./AsmHoverProvider";
+import { EmulatorSettingsPanel } from "./EmulatorSettingsPanel";
 import { MemoryVideoPanel } from "./MemoryVideoPanel";
 import { AsmSymbolProvider } from "./AsmSymbolProvider";
 
@@ -334,6 +340,7 @@ export function activate(context: vscode.ExtensionContext) {
     // ── Register disassembly content provider ─────────────────────────────────
     const disasmProvider = new Z80DisasmProvider();
     context.subscriptions.push(HexEditorProvider.register(context));
+    context.subscriptions.push(ScrEditorProvider.register(context));
 
     context.subscriptions.push(
         vscode.workspace.registerTextDocumentContentProvider("z80disasm", disasmProvider)
@@ -345,6 +352,22 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.registerTreeDataProvider("z80debug.hardwarePanels", hwTree)
     );
 
+    // ── Resources TreeView (INCBIN scanner) ──────────────────────────────────
+    const resourceIndex = new ResourceIndex();
+    const resourceTree  = new ResourceTreeProvider(resourceIndex);
+    context.subscriptions.push(
+        vscode.window.registerTreeDataProvider("z80debug.resources", resourceTree),
+        { dispose: () => resourceIndex.dispose() },
+        vscode.commands.registerCommand("z80debug.refreshResources", () => resourceIndex.scan())
+    );
+    resourceIndex.start().catch(() => {});
+
+    // ── ASM document links (INCBIN → Ctrl+click) ──────────────────────────────
+    context.subscriptions.push(AsmLinkProvider.register());
+
+    // ── ASM hover (INCBIN → miniature + infos) ────────────────────────────────
+    context.subscriptions.push(AsmHoverProvider.register(resourceIndex));
+
     // ── Commands: hardware panels ─────────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand("z80debug.showCrtcPanel",      () => CrtcAsicPanel.createOrShow()),
@@ -355,7 +378,8 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand("z80debug.showTapePanel",       () => TapePanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showScreenPanel",      () => ScreenPanel.createOrShow()),
         vscode.commands.registerCommand("z80debug.showKeyboardPanel",   () => KeyboardPanel.createOrShow()),
-        vscode.commands.registerCommand("z80debug.showMemoryVideoPanel", () => MemoryVideoPanel.createOrShow()),
+        vscode.commands.registerCommand("z80debug.showMemoryVideoPanel",  () => MemoryVideoPanel.createOrShow()),
+        vscode.commands.registerCommand("z80debug.showEmulatorSettings", () => EmulatorSettingsPanel.createOrShow()),
     );
 
     // ── Command: open disassembly at address ──────────────────────────────────
