@@ -11,6 +11,9 @@ import { EmulatorClient } from "./EmulatorClient";
 import { SymbolTable } from "./SymbolTable";
 import { SourceAnnotations } from "./SourceAnnotations";
 import { SourceMap } from "./SourceMap";
+import {
+    DataSymbol, ResolvedRef, formatValue, parseScalarInput, typeName, typeSize,
+} from "./DataSymbols";
 import { StoppedEvent } from 'vscode-debugadapter';
 import { Thread } from 'vscode-debugadapter';
 import { StackFrame, Source } from 'vscode-debugadapter';
@@ -82,6 +85,41 @@ const REG16 = new Set(["bc", "de", "hl", "sp", "pc", "ix", "iy", "bc'", "de'", "
 // 8-bit register names (2-digit hex)
 const REG8  = new Set(["i", "r"]);
 
+// Anything the emulator resolves as a register — these win over a source
+// variable of the same name when evaluating an expression.
+const RE_REGISTER_NAME =
+    /^(?:A|F|B|C|D|E|H|L|I|R|AF'?|BC'?|DE'?|HL'?|SP|PC|IX|IY|IXH|IXL|IYH|IYL)$/i;
+
+// Fixed scope references
+const SCOPE_REGISTERS = 1;
+const SCOPE_MEMORY    = 2;
+const SCOPE_STACK     = 3;
+const SCOPE_DATA      = 4;
+
+// Dynamic variable handles start above the fixed scopes
+const FIRST_VAR_HANDLE = 0x100;
+
+// Bytes read at most for one variable preview (blobs are only summarised)
+const VAR_PREVIEW_MAX = 64;
+
+// Address gap under which two reads are merged into one request
+const READ_MERGE_GAP = 64;
+
+// Largest single readMemory request when merging
+const READ_MERGE_MAX = 1024;
+
+/** One row of the Variables tree: either a data location, or a file group. */
+interface VarItem {
+    /** Name shown in the tree (short: field name inside a struct). */
+    label: string;
+    /** Data location, for a variable row. */
+    ref?: ResolvedRef;
+    /** Symbols of a file group, for a grouping row. */
+    group?: DataSymbol[];
+    /** Full path of a file group, used as its stable handle key. */
+    file?: string;
+}
+
 export class Z80DebugSession extends DebugSession {
 
     private emulator = new EmulatorClient();
@@ -104,6 +142,13 @@ export class Z80DebugSession extends DebugSession {
     // Global breakpoint registry: key → list of addresses
     // "src:<sourceRef>" for source breakpoints, "instr" for instruction breakpoints
     private bpRegistry: Map<string, number[]> = new Map();
+
+    // Variable tree handles for the "Variables" scope (source data symbols).
+    // Handles are stable across stops — keyed by the node they describe — so a
+    // watch expression expanded in the UI keeps working after the next step.
+    private varNodes: Map<number, VarItem[]> = new Map();
+    private varNodeByKey: Map<string, number> = new Map();
+    private varHandleCounter = FIRST_VAR_HANDLE;
 
     constructor() {
         super();
@@ -130,6 +175,7 @@ protected initializeRequest(
         supportsConfigurationDoneRequest: true,
         supportsEvaluateForHovers: true,
         supportsSetVariable: true,
+        supportsSetExpression: true,
         supportsStepBack: false,
         supportsDisassembleRequest: true,
         supportsRestartRequest: true,
@@ -589,14 +635,171 @@ protected async pauseRequest(
 
 protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments) {
     console.log("DAP: scopesRequest");
-    response.body = {
-        scopes: [
-            Object.assign(new Scope("Registers", 1, false), { presentationHint: "registers" }),
-            new Scope("Memory", 2, false),
-            new Scope("Stack", 3, false)
-        ]
-    };
+    const scopes: DebugProtocol.Scope[] = [
+        Object.assign(new Scope("Registers", SCOPE_REGISTERS, false), { presentationHint: "registers" }),
+    ];
+
+    // Variables declared in the assembler source, when the source was parsed.
+    const dataCount = this.sourceMap?.data.size ?? 0;
+    if (dataCount > 0) {
+        scopes.push(Object.assign(new Scope("Variables", SCOPE_DATA, false),
+                                  { namedVariables: dataCount }));
+    }
+
+    scopes.push(new Scope("Memory", SCOPE_MEMORY, false));
+    scopes.push(new Scope("Stack", SCOPE_STACK, false));
+
+    response.body = { scopes };
     this.sendResponse(response);
+}
+
+// ─── Variables scope: source data symbols ─────────────────────────────────────
+
+/** Stable handle for a node, so expansion survives stepping. */
+private varHandle(key: string, items: VarItem[]): number {
+    let handle = this.varNodeByKey.get(key);
+    if (handle === undefined) {
+        handle = this.varHandleCounter++;
+        this.varNodeByKey.set(key, handle);
+    }
+    this.varNodes.set(handle, items);
+    return handle;
+}
+
+/** Top-level rows of the Variables scope: symbols, grouped per file if several. */
+private dataScopeItems(): VarItem[] {
+    const data = this.sourceMap?.data;
+    if (!data) return [];
+
+    const perFile = data.byFile();
+    if (perFile.size <= 1) {
+        return data.all().map(s => this.itemFor(s));
+    }
+    return [...perFile.entries()].map(([file, syms]) => ({
+        label: file ? nodePath.basename(file) : "(unknown)",
+        group: syms,
+        file,
+    }));
+}
+
+private itemFor(sym: DataSymbol): VarItem {
+    return { label: sym.name, ref: { name: sym.name, address: sym.address, type: sym.type } };
+}
+
+/** Rows of a node: file group, array elements or struct fields. */
+private itemsForHandle(handle: number): VarItem[] | undefined {
+    const items = this.varNodes.get(handle);
+    if (!items) return undefined;
+    return items;
+}
+
+/** Children of one variable row, with short labels for struct fields. */
+private childItems(ref: ResolvedRef): VarItem[] {
+    const data = this.sourceMap?.data;
+    if (!data) return [];
+    return data.children(ref).map(child => ({
+        // "player.pos" → "pos", "enemies[2]" → "[2]"
+        label: child.name.slice(ref.name.length).replace(/^\./, ""),
+        ref: child,
+    }));
+}
+
+/**
+ * Read the memory backing several variables, merging nearby locations into
+ * single requests so a long variable list does not mean one round-trip each.
+ * Returns address → bytes for every requested item.
+ */
+private async readForItems(items: VarItem[]): Promise<Map<number, number[]>> {
+    const out = new Map<number, number[]>();
+    const wanted = items
+        .filter(i => i.ref)
+        .map(i => ({ address: i.ref!.address, size: Math.min(typeSize(i.ref!.type), VAR_PREVIEW_MAX) }))
+        .sort((a, b) => a.address - b.address);
+    if (wanted.length === 0) return out;
+
+    // Merge into blocks
+    const blocks: Array<{ start: number; end: number }> = [];
+    for (const w of wanted) {
+        const end = w.address + w.size;
+        const last = blocks[blocks.length - 1];
+        if (last && w.address - last.end <= READ_MERGE_GAP && end - last.start <= READ_MERGE_MAX) {
+            last.end = Math.max(last.end, end);
+        } else {
+            blocks.push({ start: w.address, end });
+        }
+    }
+
+    const fetched: Array<{ start: number; bytes: number[] }> = [];
+    for (const b of blocks) {
+        const size = Math.min(b.end - b.start, READ_MERGE_MAX);
+        try {
+            const reply = await this.emulator.send({ cmd: "readMemory", address: b.start, size });
+            fetched.push({ start: b.start, bytes: reply?.bytes ?? [] });
+        } catch {
+            fetched.push({ start: b.start, bytes: [] });
+        }
+    }
+
+    for (const w of wanted) {
+        const block = fetched.find(f => w.address >= f.start && w.address + w.size <= f.start + f.bytes.length);
+        if (block) {
+            out.set(w.address, block.bytes.slice(w.address - block.start, w.address - block.start + w.size));
+        }
+    }
+    return out;
+}
+
+/** Turn rows into DAP variables, reading their current values from memory. */
+private async renderItems(items: VarItem[], parentKey: string): Promise<DebugProtocol.Variable[]> {
+    const data = this.sourceMap?.data;
+    const memory = await this.readForItems(items);
+    const out: DebugProtocol.Variable[] = [];
+
+    for (const item of items) {
+        if (item.group) {
+            const groupItems = item.group.map(s => this.itemFor(s));
+            out.push({
+                name: item.label,
+                value: `${item.group.length} variable${item.group.length > 1 ? "s" : ""}`,
+                variablesReference: this.varHandle(`file:${item.file ?? item.label}`, groupItems),
+                namedVariables: item.group.length,
+                presentationHint: { kind: "data" },
+            } as DebugProtocol.Variable);
+            continue;
+        }
+
+        const ref = item.ref!;
+        const bytes = memory.get(ref.address);
+        const addrHex = "0x" + (ref.address & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
+        const value = bytes ? formatValue(ref.type, bytes) : "<unreadable>";
+
+        const expandable = data?.hasChildren(ref) ?? false;
+        const v: DebugProtocol.Variable = {
+            name: item.label,
+            value,
+            type: `${typeName(ref.type)} @${addrHex}`,
+            variablesReference: expandable
+                ? this.varHandle(`${parentKey}/${ref.name}`, this.childItems(ref))
+                : 0,
+            evaluateName: ref.name,
+            memoryReference: addrHex,
+        } as DebugProtocol.Variable;
+
+        if (expandable) {
+            if (ref.type.count > 1) (v as any).indexedVariables = ref.type.count;
+            else (v as any).namedVariables = ref.type.fields?.length ?? 0;
+        }
+        out.push(v);
+    }
+    return out;
+}
+
+/** Find a row by its displayed name under a given parent handle. */
+private findItem(variablesReference: number, name: string): VarItem | undefined {
+    const items = variablesReference === SCOPE_DATA
+        ? this.dataScopeItems()
+        : this.itemsForHandle(variablesReference);
+    return items?.find(i => i.label === name);
 }
 
 protected async variablesRequest(
@@ -604,7 +807,7 @@ protected async variablesRequest(
     args: DebugProtocol.VariablesArguments
 ) {
     // REGISTERS
-    if (args.variablesReference == 1) {
+    if (args.variablesReference == SCOPE_REGISTERS) {
         const regs = await this.emulator.send({
             cmd: "readRegisters"
         }) as Record<string, number>;
@@ -632,7 +835,7 @@ protected async variablesRequest(
     }
 
     // MEMORY
-    else if (args.variablesReference == 2) {
+    else if (args.variablesReference == SCOPE_MEMORY) {
         response.body = {
             variables: [
                 {
@@ -644,7 +847,7 @@ protected async variablesRequest(
         };
     }
     // Stack
-    else if (args.variablesReference == 3) {
+    else if (args.variablesReference == SCOPE_STACK) {
         // 1) Get SP
         const state = await this.emulator.send({ cmd: "getState" });
         const sp = state.sp as number;
@@ -677,10 +880,19 @@ protected async variablesRequest(
         }
         response.body = { variables: vars };
     }
+    // SOURCE VARIABLES (root of the scope)
+    else if (args.variablesReference == SCOPE_DATA) {
+        response.body = { variables: await this.renderItems(this.dataScopeItems(), "data") };
+    }
+    // SOURCE VARIABLES (array elements / struct fields / file groups)
     else {
-        response.body = { variables: [] };
-        this.sendResponse(response);
-        return;
+        const items = this.itemsForHandle(args.variablesReference);
+        if (!items) {
+            response.body = { variables: [] };
+            this.sendResponse(response);
+            return;
+        }
+        response.body = { variables: await this.renderItems(items, `h${args.variablesReference}`) };
     }
 
     this.sendResponse(response);
@@ -1277,19 +1489,91 @@ protected async evaluateRequest(
     response: DebugProtocol.EvaluateResponse,
     args: DebugProtocol.EvaluateArguments
 ){
+    const expr = (args.expression ?? "").trim();
+
+    // A source variable ("counter", "player.pos.x", "enemies[2].hp").
+    // Register names keep priority so hovering "A" still shows the register.
+    if (!RE_REGISTER_NAME.test(expr)) {
+        const evaluated = await this.evaluateDataExpression(expr);
+        if (evaluated) {
+            response.body = evaluated;
+            this.sendResponse(response);
+            return;
+        }
+    }
+
     try {
         const result = await this.emulator.send({
             cmd: "evaluate",
-            expression: args.expression
+            expression: expr
         });
-        response.body = {
-            result: result?.text ?? "?",
-            variablesReference: 0
-        };
-    } catch {
+        // The emulator answers "?" for anything it does not recognise.
+        if (result?.text && result.text !== "?") {
+            response.body = { result: result.text, variablesReference: 0 };
+            this.sendResponse(response);
+            return;
+        }
+    } catch { /* fall through to the symbol table */ }
+
+    // A code label: show where it points, not a value.
+    const labelAddr = this.symbolTable?.resolveLabel(expr);
+    if (labelAddr !== undefined) {
+        const hex = "0x" + (labelAddr & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
+        response.body = { result: hex, type: "label", variablesReference: 0, memoryReference: hex } as any;
+    } else {
         response.body = { result: "?", variablesReference: 0 };
     }
     this.sendResponse(response);
+}
+
+/** Read and format a source variable, or undefined when `expr` is not one. */
+private async evaluateDataExpression(
+    expr: string
+): Promise<DebugProtocol.EvaluateResponse["body"] | undefined> {
+    const data = this.sourceMap?.data;
+    if (!data) return undefined;
+    const ref = data.resolve(expr);
+    if (!ref) return undefined;
+
+    const addrHex = "0x" + (ref.address & 0xFFFF).toString(16).toUpperCase().padStart(4, "0");
+    const bytes = await this.readRefBytes(ref);
+    if (!bytes) {
+        return { result: "<unreadable>", type: typeName(ref.type), variablesReference: 0 };
+    }
+
+    return {
+        result: formatValue(ref.type, bytes),
+        type: `${typeName(ref.type)} @${addrHex}`,
+        variablesReference: data.hasChildren(ref)
+            ? this.varHandle(`eval/${ref.name}`, this.childItems(ref))
+            : 0,
+        memoryReference: addrHex,
+    } as DebugProtocol.EvaluateResponse["body"];
+}
+
+/** Bytes currently backing a resolved ref (preview-capped), or null on error. */
+private async readRefBytes(ref: ResolvedRef): Promise<number[] | null> {
+    const size = Math.min(typeSize(ref.type), VAR_PREVIEW_MAX);
+    try {
+        const reply = await this.emulator.send({ cmd: "readMemory", address: ref.address, size });
+        const bytes: number[] = reply?.bytes ?? [];
+        return bytes.length > 0 ? bytes : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Write a user-entered value into a source variable.
+ * Only scalars (byte / word / dword) can be assigned; aggregates must be
+ * edited field by field, or through the hex editor via memoryReference.
+ */
+private async writeDataRef(ref: ResolvedRef, input: string): Promise<string | null> {
+    const bytes = parseScalarInput(ref.type, input);
+    if (!bytes) return null;
+    await this.emulator.send({ cmd: "writeMemory", address: ref.address, bytes });
+    this.invalidateRegion(ref.address);
+    return formatValue(ref.type, bytes);
 }
 
 protected async disconnectRequest(
@@ -1370,25 +1654,60 @@ protected async setVariableRequest(
     response: DebugProtocol.SetVariableResponse,
     args: DebugProtocol.SetVariableArguments
 ) {
-    if (args.variablesReference !== 1) {
-        // Only registers scope is editable
-        response.body = { value: args.value, variablesReference: 0 };
+    // Registers
+    if (args.variablesReference === SCOPE_REGISTERS) {
+        const val = Number(args.value);  // handles "0x1234" and decimal
+        const key = args.name.toLowerCase();  // AF→af, AF'→af', I→i, etc.
+
+        await this.emulator.send({ cmd: "setRegisters", [key]: val });
+
+        const is8 = REG8.has(key);
+        response.body = {
+            value: is8
+                ? "0x" + (val & 0xFF).toString(16).padStart(2, "0").toUpperCase()
+                : "0x" + (val & 0xFFFF).toString(16).padStart(4, "0").toUpperCase(),
+            variablesReference: 0
+        };
         this.sendResponse(response);
         return;
     }
 
-    const val = Number(args.value);  // handles "0x1234" and decimal
-    const key = args.name.toLowerCase();  // AF→af, AF'→af', I→i, etc.
+    // Source variables — write through to memory
+    const item = this.findItem(args.variablesReference, args.name);
+    if (item?.ref) {
+        const written = await this.writeDataRef(item.ref, args.value);
+        if (written === null) {
+            this.sendErrorResponse(response, 1241,
+                `'${args.name}' is not a scalar value (${typeName(item.ref.type)})`);
+            return;
+        }
+        response.body = { value: written, variablesReference: 0 };
+        this.sendResponse(response);
+        return;
+    }
 
-    await this.emulator.send({ cmd: "setRegisters", [key]: val });
+    // Anything else is read-only
+    response.body = { value: args.value, variablesReference: 0 };
+    this.sendResponse(response);
+}
 
-    const is8 = REG8.has(key);
-    response.body = {
-        value: is8
-            ? "0x" + (val & 0xFF).toString(16).padStart(2, "0").toUpperCase()
-            : "0x" + (val & 0xFFFF).toString(16).padStart(4, "0").toUpperCase(),
-        variablesReference: 0
-    };
+protected async setExpressionRequest(
+    response: DebugProtocol.SetExpressionResponse,
+    args: DebugProtocol.SetExpressionArguments
+) {
+    const ref = this.sourceMap?.data.resolve(args.expression ?? "");
+    if (!ref) {
+        this.sendErrorResponse(response, 1242,
+            `'${args.expression}' is not a known source variable`);
+        return;
+    }
+    const written = await this.writeDataRef(ref, args.value);
+    if (written === null) {
+        this.sendErrorResponse(response, 1243,
+            `'${args.expression}' is not a scalar value (${typeName(ref.type)})`);
+        return;
+    }
+    response.body = { value: written, variablesReference: 0 };
     this.sendResponse(response);
 }
 
@@ -1524,6 +1843,32 @@ protected async customRequest(
             }
         } catch (e) {
             this.sendErrorResponse(response, 1248, `insertDisk failed: ${e}`);
+        }
+    } else if (command === "getEmulatorSettings") {
+        await this._forwardHardwareRequest(response, "getEmulatorSettings", 1270);
+    } else if (command === "getEmulatorSetting") {
+        try {
+            const result = await this.emulator.send({ cmd: "getEmulatorSetting", ...args });
+            response.body = result?.error ? { error: result.error } : result;
+            this.sendResponse(response);
+        } catch (e) {
+            this.sendErrorResponse(response, 1271, `getEmulatorSetting failed: ${e}`);
+        }
+    } else if (command === "setEmulatorSetting") {
+        try {
+            const result = await this.emulator.send({ cmd: "setEmulatorSetting", ...args });
+            response.body = result?.error ? { error: result.error } : result;
+            this.sendResponse(response);
+        } catch (e) {
+            this.sendErrorResponse(response, 1272, `setEmulatorSetting failed: ${e}`);
+        }
+    } else if (command === "setEmulatorSettings") {
+        try {
+            const result = await this.emulator.send({ cmd: "setEmulatorSettings", settings: args.settings });
+            response.body = result?.error ? { error: result.error } : result;
+            this.sendResponse(response);
+        } catch (e) {
+            this.sendErrorResponse(response, 1273, `setEmulatorSettings failed: ${e}`);
         }
     } else if (command === "keyboard") {
         try {

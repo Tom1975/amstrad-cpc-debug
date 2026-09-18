@@ -34,7 +34,7 @@ export abstract class HardwarePanel {
 
     // ── Shared CSS ────────────────────────────────────────────────────────────
 
-    protected static commonCss(): string {
+    static commonCss(): string {
         return /* css */`
   :root {
     --fg:         var(--vscode-editor-foreground, #ccc);

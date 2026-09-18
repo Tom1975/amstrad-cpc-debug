@@ -24,7 +24,8 @@
   "activationEvents": [
     "onDebug",
     "onStartupFinished",
-    "onCustomEditor:z80debug.hexEditor"
+    "onCustomEditor:z80debug.hexEditor",
+    "onCustomEditor:z80debug.scrEditor"
   ],
   "main": "./dist/main.js",
   "contributes": {
@@ -47,6 +48,16 @@
           },
           {
             "filenamePattern": "*.cdt"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "z80debug.scrEditor",
+        "displayName": "CPC Screen Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.scr"
           }
         ],
         "priority": "default"
@@ -246,6 +257,17 @@
         "command": "z80debug.clearDirectBreakpoints",
         "title": "%cmd.clearDirectBreakpoints%",
         "category": "Z80 Debug"
+      },
+      {
+        "command": "z80debug.showEmulatorSettings",
+        "title": "Réglages émulateur",
+        "category": "Z80 Debug"
+      },
+      {
+        "command": "z80debug.refreshResources",
+        "title": "%cmd.refreshResources%",
+        "category": "Z80 Debug",
+        "icon": "$(refresh)"
       }
     ],
     "viewsWelcome": [
@@ -274,6 +296,11 @@
           "id": "z80debug.hardwarePanels",
           "name": "%view.hardware%",
           "visibility": "visible"
+        },
+        {
+          "id": "z80debug.resources",
+          "name": "%view.resources%",
+          "visibility": "visible"
         }
       ]
     },
@@ -298,6 +325,13 @@
           "command": "z80debug.addBreakpointAt",
           "when": "debugType == 'z80' && debugState == 'stopped'",
           "group": "z80debug@4"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "z80debug.refreshResources",
+          "when": "view == z80debug.resources",
+          "group": "navigation"
         }
       ],
       "debug/variables/context": [

@@ -28,6 +28,7 @@ The reference emulator is **[SugarboxV2](https://github.com/Tom1975/SugarboxV2)*
   - [Disassembly view](#disassembly-view)
   - [Breakpoints](#breakpoints)
   - [Registers and stack](#registers-and-stack)
+  - [Source variables and structures](#source-variables-and-structures)
   - [Memory view](#memory-view)
   - [Hardware panels](#hardware-panels)
   - [Virtual keyboard](#virtual-keyboard)
@@ -294,11 +295,55 @@ The command **Z80 Debug: Toggle breakpoint at address / label** (`Ctrl+Shift+P`)
 The **Variables** panel exposes:
 
 - **Registers** — all Z80 registers (AF, BC, DE, HL, SP, PC, IX, IY, AF′, BC′, DE′, HL′, I, R). Double-click any register to edit its value.
+- **Variables** — the variables and structures declared in your source (see below).
 - **Stack** — top 16 words on the stack with their addresses.
 
 Right-clicking a 16-bit register offers:
 - *Open Memory View* — jump to that address in the memory panel
 - *Open Disassembly View* — disassemble from that address
+
+---
+
+### Source variables and structures
+
+When `sourceFile` is set in your launch configuration, the adapter parses the
+`.asm` tree (following `INCLUDE`s) and types every labelled data definition, so
+the **Variables** scope shows what your program actually declared, with its
+current value read from emulator memory:
+
+| Source | Shown as |
+|---|---|
+| `counter:  DB 0` | `counter` — `0x1F (31)` |
+| `score:    DW 0` | `score` — `0x1234 (4660)` |
+| `message:  DB "HELLO",0` | `message` — `"HELLO."` |
+| `table:    DB 1,2,3,4` | `table` — expandable, one row per element |
+| `buffer:   DS 64` | `buffer` — `[64 bytes] 00 00 …` |
+
+`STRUCT` blocks are read as type definitions: their fields contribute offsets
+only, and an instance (`player sprite`, or `STRUCT sprite, player`) expands
+field by field, nested structs included. An array of instances
+(`enemies sprite 4`) expands to its elements first.
+
+Addresses come from the `.rasm` symbol file whenever the label is in it — the
+build always wins over the parse, which cannot see macros or conditionals — and
+fall back to the parsed address otherwise. The type column shows the address
+used, e.g. `word @0x4210`.
+
+What you can do with them:
+
+- **Edit a value** — double-click a scalar row (byte, word, dword) and type
+  `0x1F`, `#1F`, `31`, `%1010` or `'A'`. Aggregates are read-only in the tree;
+  use their fields, or right-click → *View Binary Data* to open the hex editor
+  at that address.
+- **Watch** — add `player.pos.x`, `enemies[2].hp` or `table[3]` to the WATCH
+  panel, or evaluate them in the Debug Console. Indexing and field access can
+  be combined to any depth.
+- **Hover** — hovering a variable in the `.asm` source during a pause shows its
+  current value. The whole chain under the cursor is evaluated, so hovering
+  anywhere in `player.pos.xx` reads that field, not just the word you point at.
+
+Register names keep priority when evaluating, so hovering `A` still shows the
+register.
 
 ---
 

@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "release_*"
 
 jobs:
   release:
@@ -28,7 +28,9 @@ jobs:
 
       - name: Extract version from tag
         id: ver
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          V="${GITHUB_REF_NAME#release_}"
+          echo "VERSION=${V//_/.}" >> "$GITHUB_OUTPUT"
 
       - name: Package VSIX
         run: python3 make_vsix.py --version "${{ steps.ver.outputs.VERSION }}"
