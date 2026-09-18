@@ -28,6 +28,7 @@ L'émulateur de référence est **[SugarboxV2](https://github.com/Tom1975/Sugarb
   - [Vue désassemblage](#vue-désassemblage)
   - [Breakpoints](#breakpoints)
   - [Registres et pile](#registres-et-pile)
+  - [Variables et structures du source](#variables-et-structures-du-source)
   - [Vue mémoire](#vue-mémoire)
   - [Panneaux hardware](#panneaux-hardware)
   - [Clavier virtuel](#clavier-virtuel)
@@ -294,11 +295,57 @@ La commande **Z80 Debug: Toggle breakpoint at address / label** (`Ctrl+Shift+P`)
 Le panneau **Variables** expose :
 
 - **Registers** — tous les registres Z80 (AF, BC, DE, HL, SP, PC, IX, IY, AF′, BC′, DE′, HL′, I, R). Double-cliquer sur un registre pour éditer sa valeur.
+- **Variables** — les variables et structures déclarées dans le source (voir plus bas).
 - **Stack** — 16 premiers mots sur la pile avec leur adresse.
 
 Le menu contextuel d'un registre 16 bits propose :
 - *Open Memory View* — aller à cette adresse dans le panneau mémoire
 - *Open Disassembly View* — désassembler depuis cette adresse
+
+---
+
+### Variables et structures du source
+
+Quand `sourceFile` est renseigné dans la configuration de lancement, l'adaptateur
+parse l'arborescence `.asm` (en suivant les `INCLUDE`) et type chaque définition
+de données étiquetée. Le scope **Variables** affiche donc ce que le programme
+déclare réellement, avec sa valeur courante lue dans la mémoire de l'émulateur :
+
+| Source | Affiché |
+|---|---|
+| `counter:  DB 0` | `counter` — `0x1F (31)` |
+| `score:    DW 0` | `score` — `0x1234 (4660)` |
+| `message:  DB "HELLO",0` | `message` — `"HELLO."` |
+| `table:    DB 1,2,3,4` | `table` — dépliable, une ligne par élément |
+| `buffer:   DS 64` | `buffer` — `[64 bytes] 00 00 …` |
+
+Les blocs `STRUCT` sont lus comme des définitions de type : leurs champs ne
+produisent que des offsets, et une instance (`player sprite`, ou
+`STRUCT sprite, player`) se déplie champ par champ, structures imbriquées
+incluses. Un tableau d'instances (`enemies sprite 4`) se déplie d'abord en
+éléments.
+
+Les adresses proviennent du fichier de symboles `.rasm` dès que le label y
+figure — le build primant toujours sur le parse, qui ne voit ni les macros ni les
+conditionnelles — et retombent sur l'adresse calculée sinon. La colonne de type
+indique l'adresse utilisée, par ex. `word @0x4210`.
+
+Ce que l'on peut en faire :
+
+- **Éditer une valeur** — double-cliquer une ligne scalaire (byte, word, dword)
+  et saisir `0x1F`, `#1F`, `31`, `%1010` ou `'A'`. Les agrégats sont en lecture
+  seule dans l'arbre : passer par leurs champs, ou clic droit → *View Binary
+  Data* pour ouvrir l'éditeur hex à cette adresse.
+- **Watch** — ajouter `player.pos.x`, `enemies[2].hp` ou `table[3]` au panneau
+  WATCH, ou les évaluer dans la console de debug. Indexation et accès aux champs
+  se combinent à toute profondeur.
+- **Survol** — survoler une variable dans le source `.asm` pendant une pause
+  affiche sa valeur courante. Toute la chaîne sous le curseur est évaluée :
+  survoler n'importe où dans `player.pos.xx` lit bien ce champ, pas seulement le
+  mot pointé.
+
+Les noms de registres gardent la priorité à l'évaluation : survoler `A` affiche
+toujours le registre.
 
 ---
 

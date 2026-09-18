@@ -26,6 +26,7 @@ import { AsmHoverProvider } from "./AsmHoverProvider";
 import { EmulatorSettingsPanel } from "./EmulatorSettingsPanel";
 import { MemoryVideoPanel } from "./MemoryVideoPanel";
 import { AsmSymbolProvider } from "./AsmSymbolProvider";
+import { AsmEvaluatableExpressionProvider } from "./AsmEvaluatableExpressionProvider";
 
 // ─── Disassembly virtual document provider ────────────────────────────────────
 
@@ -367,6 +368,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── ASM hover (INCBIN → miniature + infos) ────────────────────────────────
     context.subscriptions.push(AsmHoverProvider.register(resourceIndex));
+
+    // ── ASM debug hover (variable under the cursor → current value) ───────────
+    context.subscriptions.push(AsmEvaluatableExpressionProvider.register());
 
     // ── Commands: hardware panels ─────────────────────────────────────────────
     context.subscriptions.push(

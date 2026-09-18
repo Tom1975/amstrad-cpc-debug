@@ -44,12 +44,23 @@ class ScrDocument implements vscode.CustomDocument {
     dispose() {}
 }
 
+interface ScrViewState {
+    mode: number;
+    numCols: number;
+    numLines: number;
+    palette: number[];
+}
+
+const VIEW_STATE_KEY_PREFIX = "scrEditor.viewState.";
+
 export class ScrEditorProvider implements vscode.CustomReadonlyEditorProvider<ScrDocument> {
+
+    constructor(private readonly context: vscode.ExtensionContext) {}
 
     static register(context: vscode.ExtensionContext): vscode.Disposable {
         return vscode.window.registerCustomEditorProvider(
             "z80debug.scrEditor",
-            new ScrEditorProvider(),
+            new ScrEditorProvider(context),
             { webviewOptions: { retainContextWhenHidden: true } }
         );
     }
@@ -66,11 +77,16 @@ export class ScrEditorProvider implements vscode.CustomReadonlyEditorProvider<Sc
         webviewPanel.webview.options = { enableScripts: true };
         webviewPanel.webview.html = this._buildHtml();
 
+        const stateKey = VIEW_STATE_KEY_PREFIX + document.uri.toString();
+
         webviewPanel.webview.onDidReceiveMessage(async (msg) => {
             if (msg.type === "ready") {
                 const bytes = await vscode.workspace.fs.readFile(document.uri);
                 const b64 = Buffer.from(bytes).toString("base64");
-                webviewPanel.webview.postMessage({ type: "load", data: b64 });
+                const viewState = this.context.workspaceState.get<ScrViewState>(stateKey);
+                webviewPanel.webview.postMessage({ type: "load", data: b64, viewState });
+            } else if (msg.type === "saveState") {
+                await this.context.workspaceState.update(stateKey, msg.state);
             }
         });
     }
@@ -333,6 +349,7 @@ function buildHwPicker() {
             palette[selectedInk] = i;
             rebuildInkRow();
             render();
+            saveState();
         });
         picker.appendChild(sw);
     }
@@ -343,18 +360,31 @@ function updateSelectedLabel() {
         'Ink sélectionné : ' + selectedInk + ' (couleur CPC ' + palette[selectedInk] + ')';
 }
 
+// ── Persistance de l'état de vue (mode, dimensions, palette) par fichier ───────
+function saveState() {
+    vscode.postMessage({
+        type: 'saveState',
+        state: { mode: currentMode, numCols, numLines, palette: palette.slice() }
+    });
+}
+
+function applyMode(m) {
+    currentMode = m;
+    if (selectedInk >= inkCount()) selectedInk = 0;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode == m));
+}
+
 // ── Mode switch ───────────────────────────────────────────────────────────────
 document.querySelectorAll('.mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const m = parseInt(btn.dataset.mode);
         if (m === currentMode) return;
-        currentMode = m;
+        applyMode(m);
         palette = DEFAULT_PALETTES[m].slice();
-        if (selectedInk >= inkCount()) selectedInk = 0;
-        document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b === btn));
         rebuildInkRow();
         updateSelectedLabel();
         render();
+        saveState();
     });
 });
 
@@ -370,11 +400,13 @@ inColumns.addEventListener('change', () => {
     numCols = clampDim(inColumns.value, 1, 255, numCols);
     inColumns.value = numCols;
     render();
+    saveState();
 });
 inLines.addEventListener('change', () => {
     numLines = clampDim(inLines.value, 1, 1024, numLines);
     inLines.value = numLines;
     render();
+    saveState();
 });
 
 // ── Presets ───────────────────────────────────────────────────────────────────
@@ -383,12 +415,14 @@ document.getElementById('btnPresetFirmware').addEventListener('click', () => {
     rebuildInkRow();
     updateSelectedLabel();
     render();
+    saveState();
 });
 document.getElementById('btnPresetBlack').addEventListener('click', () => {
     palette = Array(16).fill(0);
     rebuildInkRow();
     updateSelectedLabel();
     render();
+    saveState();
 });
 
 // ── Zoom controls ─────────────────────────────────────────────────────────────
@@ -406,6 +440,19 @@ window.addEventListener('message', e => {
         const raw = atob(msg.data);
         scrData = new Uint8Array(raw.length);
         for (let i = 0; i < raw.length; i++) scrData[i] = raw.charCodeAt(i);
+
+        const vs = msg.viewState;
+        if (vs) {
+            applyMode(vs.mode ?? 0);
+            numCols  = clampDim(vs.numCols,  1, 255,  numCols);
+            numLines = clampDim(vs.numLines, 1, 1024, numLines);
+            inColumns.value = numCols;
+            inLines.value   = numLines;
+            if (Array.isArray(vs.palette) && vs.palette.length === 16) palette = vs.palette.slice();
+            else palette = DEFAULT_PALETTES[currentMode].slice();
+            rebuildInkRow();
+            updateSelectedLabel();
+        }
         render();
     }
 });
